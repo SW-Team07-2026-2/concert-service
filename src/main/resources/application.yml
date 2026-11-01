@@ -1,0 +1,124 @@
+spring:
+  application.name: concert
+  config.import: optional:configtree:/etc/secrets/
+  task.scheduling.pool.size: 4                # outbox 1초 · 입장 처리 1초 · 스냅샷 5초 · 만료 30초 — 한 스레드면 서로 밀립니다
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST}:5432/indie_db?currentSchema=concert&ApplicationName=concert
+    username: concert_svc
+    password: ${db.password}                  # ← configtree 파일
+    hikari:
+      maximum-pool-size: 5                    # ★ DB 쪽 CONNECTION LIMIT 30 / HPA 최대 6 (측정 상한)
+      minimum-idle: 2
+      connection-timeout: 3000
+      max-lifetime: 1500000                   # 25분 — RDS 쪽보다 짧게
+      leak-detection-threshold: 20000
+
+  jpa:
+    open-in-view: false                       # ★ 커넥션 점유 방지
+    hibernate.ddl-auto: validate              # 🔴 none/update 아님 — Flyway 와 불일치를 잡는다 (로컬만 update)
+    properties:
+      hibernate:
+        default_schema: concert
+        jdbc.batch_size: 50
+        order_inserts: true
+        query.in_clause_parameter_padding: true
+
+  flyway:
+    enabled: true
+    schemas: concert
+    default-schema: concert
+    baseline-on-migrate: false                # 🔴 true 는 기존 테이블을 조용히 건너뜁니다
+    validate-on-migrate: true
+
+  kafka:
+    bootstrap-servers: ${KAFKA_SERVERS}
+    consumer:
+      group-id: concert-service               # ★ replica 들이 같은 그룹 → 파티션 분배
+      auto-offset-reset: earliest
+      enable-auto-commit: false               # ★ 수동 커밋
+      max-poll-records: 50
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: MANUAL
+      concurrency: 1
+      missing-topics-fatal: false             # 🔴 Kafka 장애가 기동을 막지 않게
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 1
+        max.block.ms: 3000                    # Kafka 장애 시 릴레이 스레드가 60초씩 묶이지 않게
+
+server:
+  port: 8083
+  shutdown: graceful
+  tomcat.threads.max: 100                     # 대기열 진입 · 폴링은 DB 를 거치지 않습니다 — 스레드가 DB 풀(5)보다 커도 됩니다
+
+management:
+  server.port: 8093
+  endpoints.web.exposure.include: health,info,prometheus
+  endpoint.health:
+    probes.enabled: true
+    group:
+      readiness.include: db                   # ★ Redis 는 넣지 않습니다 — 대기열이 죽어도 공연 조회는 됩니다
+      liveness.include: ping
+
+springdoc:
+  api-docs.enabled: false                     # 운영 노출 안 함 — local 에서만 켭니다
+  swagger-ui.enabled: false
+
+app:
+  internal:                                   # 들어오는 /internal/** 검증
+    expected-audience: concert
+    allowed-issuers: [studio, ops]            # ✏️ 11/01 21A — 수집(ingest) 직접 호출은 닫음 · Gateway /ingest/** 경유만 (아래 ingest-issuer). TODO(결정대기): Studio · 운영 스크립트의 iss 이름
+    clock-skew-seconds: 30
+    ingest-issuer: gateway                    # docs/22 S1 — Gateway /ingest/** 가 수집 서명을 확인하고 발급 (sub=ingest:{키} · body_sha256)
+    ingest-paths: [/internal/concerts, /internal/concerts/ingest/diff]
+  internal-token:                             # 나가는 호출 (Concert → Payment)
+    issuer: concert
+    ttl-seconds: 300
+  payment:
+    base-url: ${PAYMENT_BASE_URL:http://payment:8084}
+    connect-timeout-ms: 1000
+    read-timeout-ms: 3000                     # 11 §4 — 동기 호출 타임아웃 3초
+  zone: Asia/Seoul                            # 캘린더 · 날짜 필터의 하루 경계
+  booking:
+    select-minutes: 3                         # FR-CON-15 — 좌석을 고르고(경합 참여) 3분 안에 결제 (입장 토큰 10분 안)
+    claim-seconds: 30                         # 결제 승인 중 좌석 잠금 — Payment 응답을 못 받으면 이 시간 뒤 만료 처리기가 결제 상태로 확정 · 반환
+    cancel-deadline-hours: 24                 # FR-CON-14 — 공연 24시간 전까지 취소
+    expiry-interval-ms: 30000                 # 선택 만료 정리 30초
+    lock-ttl-ms: 3000                         # 08 §8.3 — 사용자 락 PX 3000
+  entry:                                      # 입장 QR (11/01 · 암표 방지) — 서명 키는 configtree entry.qr-secret (Concert 만)
+    qr-ttl-seconds: 30                        # QR 은 30초 뒤 무효 — 앱은 20초마다 새로 받습니다 (캡처본 되팔기 차단)
+    open-before-hours: 3                      # 공연 시작 3시간 전부터 발급 · 🔴 cancel-deadline-hours(24) 보다 짧아야 입장 뒤 환불이 생기지 않습니다
+    close-after-hours: 6                      # 공연 끝 시각이 없어 시작 + 6시간까지 (가안)
+  queue:
+    admit-batch: 20                           # 08 §8.2 — 1초마다 N명 (시작값 20)
+    admit-interval-ms: 1000
+    max-pops-per-tick: 200                    # 이탈자(하트비트 없음)를 건너뛰며 꺼내는 상한
+    snapshot-interval-ms: 5000                # 16 §1 — 5초 증분 배치 INSERT
+    snapshot-batch: 1000
+    alive-ttl-seconds: 15                     # FR-CON-24 — 15초 폴링이 없으면 이탈
+    entry-ttl-minutes: 10                     # FR-CON-20 — 입장 토큰 10분
+    poll-after-ms: 2000
+    degraded-poll-after-ms: 3000
+    leader-ttl-ms: 5000                       # 08 §8.2 — 입장 처리기 리더 락 TTL 5초
+  page:
+    size: 20
+    max-size: 50
+  cache:
+    seats-ttl-ms: 2000                        # 08 §8.3 — 좌석 배치 캐시 2초
+  outbox:
+    relay-interval-ms: 1000
+    batch-size: 100
+  redis:
+    queue:                                    # 대기열 Redis — noeviction · 영속화 끔 (16 §4 · §5)
+      host: ${REDIS_QUEUE_HOST:redis-queue}
+      port: 6379
+    cache:                                    # 캐시용 Redis — allkeys-lru (분산 락 · 좌석 캐시). 죽어도 DB 가 최종 보장
+      host: ${REDIS_CACHE_HOST:redis-cache}
+      port: 6379
