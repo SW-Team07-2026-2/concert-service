@@ -35,8 +35,10 @@ import java.util.HexFormat;
 /**
  * /internal/** 전용 — X-Internal-Token (HS256 · 공유 시크릿) 검증 (Member 명세 §13 과 동일 · aud = concert).
  * <pre>
- * ① 헤더 없음 → 401 INTERNAL_TOKEN_REQUIRED   ② 서명 · ③ iss/aud · ④ exp(±30초) 실패 → 401 INTERNAL_TOKEN_INVALID
- * ⑤ iss=gateway (수집 · docs/22 S1 · S2) — 수집 API 에서만 · sub=ingest:* · 본문 해시가 다르면 400 BODY_DIGEST_MISMATCH
+ * ① 헤더 없음 → 401 INTERNAL_TOKEN_REQUIRED   ② 서명 · ③ iss/aud · exp 없음 → 401 INTERNAL_TOKEN_INVALID (사유는 로그)
+ * ④ exp(+30초) 지남 → 401 INTERNAL_TOKEN_EXPIRED
+ * ⑤ iss=gateway (수집 · docs/22 S1 · S2) — 수집 API 에서만 · sub=ingest:* · 본문 1 MiB 초과 413 PAYLOAD_TOO_LARGE ·
+ *   본문 해시가 다르면 400 BODY_DIGEST_MISMATCH
  * </pre>
  * 🔴 이 필터 없이 배포되면 클러스터 안의 누구든 공연 · 좌석을 덮어쓰고 대기열을 재구성할 수 있습니다.
  * 🔴 X-User-Id 를 신뢰하지 않습니다 — 내부 API 의 사용자 식별은 요청 본문 값으로 합니다.
@@ -68,39 +70,49 @@ public class InternalTokenFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String token = request.getHeader(HEADER);
         if (token == null || token.isBlank()) {
-            reject(request, response, CommonErrorCode.INTERNAL_TOKEN_REQUIRED);
+            reject(request, response, CommonErrorCode.INTERNAL_TOKEN_REQUIRED, "missing");
             return;
         }
-        JWTClaimsSet claims = verify(token);
-        if (claims == null) {
-            reject(request, response, CommonErrorCode.INTERNAL_TOKEN_INVALID);
+        Verified verified = verify(token);
+        if (verified.claims() == null) {
+            reject(request, response, "expired".equals(verified.reason())
+                    ? CommonErrorCode.INTERNAL_TOKEN_EXPIRED : CommonErrorCode.INTERNAL_TOKEN_INVALID, verified.reason());
             return;
         }
+        JWTClaimsSet claims = verified.claims();
         if (props.ingestIssuer().equals(claims.getIssuer())) {
             ingest(request, response, chain, claims);
             return;
         }
         if (!props.allowedIssuers().contains(claims.getIssuer())) {
-            reject(request, response, CommonErrorCode.INTERNAL_TOKEN_INVALID);
+            reject(request, response, CommonErrorCode.INTERNAL_TOKEN_INVALID, "issuer");
             return;
         }
         chain.doFilter(request, response);
     }
 
-    /** ② 서명 · alg · ③ aud · ④ exp — 통과하면 클레임, 아니면 null. iss 는 호출하는 쪽이 봅니다 */
-    private JWTClaimsSet verify(String token) {
+    /** ② 서명 · alg · ③ aud · ④ exp — 통과하면 클레임, 아니면 거절 사유. iss 는 호출하는 쪽이 봅니다 */
+    private Verified verify(String token) {
         try {
             SignedJWT jwt = SignedJWT.parse(token);
-            if (!JWSAlgorithm.HS256.equals(jwt.getHeader().getAlgorithm())) return null;   // ★ alg 고정
-            if (!jwt.verify(verifier)) return null;
+            if (!JWSAlgorithm.HS256.equals(jwt.getHeader().getAlgorithm())) return Verified.rejected("alg");   // ★ alg 고정
+            if (!jwt.verify(verifier)) return Verified.rejected("signature");
             JWTClaimsSet claims = jwt.getJWTClaimsSet();
-            if (claims.getIssuer() == null) return null;
-            if (claims.getAudience() == null || !claims.getAudience().contains(props.expectedAudience())) return null;
+            if (claims.getIssuer() == null) return Verified.rejected("issuer");
+            if (claims.getAudience() == null || !claims.getAudience().contains(props.expectedAudience())) return Verified.rejected("audience");
             Date exp = claims.getExpirationTime();
+            if (exp == null) return Verified.rejected("exp");
             Instant now = clock.instant();
-            return exp != null && now.isBefore(exp.toInstant().plusSeconds(props.clockSkewSeconds())) ? claims : null;
+            return now.isBefore(exp.toInstant().plusSeconds(props.clockSkewSeconds())) ? new Verified(claims, null) : Verified.rejected("expired");
         } catch (Exception e) {
-            return null;
+            return Verified.rejected("parse");
+        }
+    }
+
+    /** claims 가 null 이면 reason 이 거절 사유 (expired 만 응답 코드가 다르고 나머지는 로그로만 구분) */
+    private record Verified(JWTClaimsSet claims, String reason) {
+        static Verified rejected(String reason) {
+            return new Verified(null, reason);
         }
     }
 
@@ -110,16 +122,26 @@ public class InternalTokenFilter extends OncePerRequestFilter {
      */
     private void ingest(HttpServletRequest request, HttpServletResponse response, FilterChain chain, JWTClaimsSet claims)
             throws ServletException, IOException {
+        if (!props.ingestPaths().contains(request.getRequestURI())) {
+            reject(request, response, CommonErrorCode.INTERNAL_TOKEN_INVALID, "ingest_path");
+            return;
+        }
         String sub = claims.getSubject();
-        if (!props.ingestPaths().contains(request.getRequestURI()) || sub == null || !sub.startsWith("ingest:")
-                || !(claims.getClaim("body_sha256") instanceof String expected)) {
-            reject(request, response, CommonErrorCode.INTERNAL_TOKEN_INVALID);
+        if (sub == null || !sub.startsWith("ingest:")) {
+            reject(request, response, CommonErrorCode.INTERNAL_TOKEN_INVALID, "ingest_subject");
+            return;
+        }
+        if (!(claims.getClaim("body_sha256") instanceof String expected)) {
+            reject(request, response, CommonErrorCode.INTERNAL_TOKEN_INVALID, "body_sha256");
             return;
         }
         byte[] body = request.getInputStream().readNBytes(MAX_INGEST_BODY + 1);
-        if (body.length > MAX_INGEST_BODY || !MessageDigest.isEqual(
-                sha256Hex(body).getBytes(StandardCharsets.UTF_8), expected.getBytes(StandardCharsets.UTF_8))) {
-            reject(request, response, CommonErrorCode.BODY_DIGEST_MISMATCH);
+        if (body.length > MAX_INGEST_BODY) {
+            reject(request, response, CommonErrorCode.PAYLOAD_TOO_LARGE, "body_size");
+            return;
+        }
+        if (!MessageDigest.isEqual(sha256Hex(body).getBytes(StandardCharsets.UTF_8), expected.getBytes(StandardCharsets.UTF_8))) {
+            reject(request, response, CommonErrorCode.BODY_DIGEST_MISMATCH, "body_digest");
             return;
         }
         chain.doFilter(new CachedBodyRequest(request, body), response);
@@ -133,8 +155,8 @@ public class InternalTokenFilter extends OncePerRequestFilter {
         }
     }
 
-    private void reject(HttpServletRequest request, HttpServletResponse response, CommonErrorCode code) throws IOException {
-        log.warn("internal_token_rejected code={} path={} remote={}", code, request.getRequestURI(), request.getRemoteAddr());
+    private void reject(HttpServletRequest request, HttpServletResponse response, CommonErrorCode code, String reason) throws IOException {
+        log.warn("internal_token_rejected code={} reason={} path={} remote={}", code, reason, request.getRequestURI(), request.getRemoteAddr());
         response.setStatus(code.getStatus().value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());

@@ -150,9 +150,10 @@ public class QueueService {
         } catch (QueueStore.Unavailable e) {
             throw unavailable();
         }
-        if (entry.isEmpty() || !MessageDigest.isEqual(entry.get().token().getBytes(StandardCharsets.UTF_8),
+        if (entry.isEmpty()) throw new GeneralException(QueueErrorCode.QUEUE_NOT_ADMITTED);
+        if (!MessageDigest.isEqual(entry.get().token().getBytes(StandardCharsets.UTF_8),
                 entryToken.strip().getBytes(StandardCharsets.UTF_8))) {
-            throw entryRequired();
+            throw new GeneralException(QueueErrorCode.ENTRY_TOKEN_INVALID);
         }
     }
 

@@ -138,7 +138,9 @@ public class BookingService {
     public BookingPaid pay(long userId, long bookingId, String paymentKey, int amount, String forceDecline) {
         BookingEntity b = bookingRepository.findByIdAndUserId(bookingId, userId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
         if (b.getStatus() == BookingEntity.Status.CONFIRMED) throw new GeneralException(BookingErrorCode.ALREADY_PAID);
-        if (b.getStatus() != BookingEntity.Status.PENDING || !isOpen(b)) throw new GeneralException(BookingErrorCode.SELECTION_EXPIRED);
+        if (b.getStatus() == BookingEntity.Status.CANCELLED) throw new GeneralException(BookingErrorCode.BOOKING_CANCELLED);
+        if (b.getStatus() == BookingEntity.Status.EXPIRED) throw new GeneralException(BookingErrorCode.SELECTION_EXPIRED);   // 만료 처리기가 정리함
+        if (!isOpen(b)) throw new GeneralException(BookingErrorCode.SELECTION_EXPIRED);   // 3분은 지났는데 처리기(30초)가 아직 안 돎
         long seatId = seatOf(bookingId);
         OffsetDateTime until = OffsetDateTime.now(clock).plusSeconds(props.claimSeconds());
         Integer claimed = tx.execute(s -> seatRepository.claim(seatId, bookingId, userId, until));
