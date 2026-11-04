@@ -250,6 +250,27 @@ class ConcertSchemaTest {
         assertThat(jdbc.queryForObject("SELECT artist_name FROM concert WHERE id = ?", String.class, other)).isEqualTo("새소년");
     }
 
+    /** 검표 화면 공연 목록 — 끝 시각이 있으면 그 시각까지, 없으면 시작 + 6시간까지. 끝이 시작보다 앞이면 DB 가 거부 */
+    @Test
+    void entryOpenConcertsUseEndsAtWhenKnown() {
+        OffsetDateTime now = OffsetDateTime.now();
+        long ended = concert("entry-ended");
+        long festival = concert("entry-festival");
+        long noEnd = concert("entry-no-end");
+        long tooOld = concert("entry-too-old");
+        jdbc.update("UPDATE concert SET starts_at = now() - interval '2 hours', ends_at = now() - interval '1 minute' WHERE id = ?", ended);
+        jdbc.update("UPDATE concert SET starts_at = now() - interval '7 hours', ends_at = now() + interval '1 hour' WHERE id = ?", festival);
+        jdbc.update("UPDATE concert SET starts_at = now() - interval '5 hours' WHERE id = ?", noEnd);
+        jdbc.update("UPDATE concert SET starts_at = now() - interval '7 hours' WHERE id = ?", tooOld);
+
+        List<Long> open = concertRepository.findEntryOpen(now, now.plusHours(3), now.minusHours(6)).stream()
+                .map(c -> c.getId()).toList();
+
+        assertThat(open).contains(festival, noEnd).doesNotContain(ended, tooOld);
+        assertThatThrownBy(() -> jdbc.update("UPDATE concert SET ends_at = starts_at WHERE id = ?", noEnd))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
     /** 무대 그리기 원본(가안)은 JSONB 로 저장되고, 같은 공연장에 다시 보내면 한 줄을 덮어씁니다 */
     @Test
     void stageDrawingIsStoredAsJsonbOnePerVenue() {

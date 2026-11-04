@@ -95,7 +95,7 @@ app:
   entry:                                      # 입장 QR (11/01 · 암표 방지) — 서명 키는 configtree entry.qr-secret (Concert 만)
     qr-ttl-seconds: 30                        # QR 은 30초 뒤 무효 — 앱은 20초마다 새로 받습니다 (캡처본 되팔기 차단)
     open-before-hours: 3                      # 공연 시작 3시간 전부터 발급 · 🔴 cancel-deadline-hours(24) 보다 짧아야 입장 뒤 환불이 생기지 않습니다
-    close-after-hours: 6                      # 공연 끝 시각이 없어 시작 + 6시간까지 (가안)
+    close-after-hours: 6                      # 공연 끝 시각(ends_at)을 모를 때만 — 시작 + 6시간까지
   queue:
     admit-batch: 20                           # 08 §8.2 — 1초마다 N명 (시작값 20)
     admit-interval-ms: 1000

@@ -46,6 +46,9 @@ public class ConcertEntity {
 
     private OffsetDateTime startsAt;
 
+    /** 공연 끝 시각 — 모르면 null (입장 QR 마감은 시작 + entry.close-after-hours) */
+    private OffsetDateTime endsAt;
+
     private Integer price;
 
     private OffsetDateTime bookingOpenAt;
@@ -70,13 +73,13 @@ public class ConcertEntity {
 
     /** 값을 덮어쓰고 바뀐 게 있으면 true. queueEnabled 가 null 이면 기존 값을 둡니다 (수집기는 보통 모릅니다) */
     public boolean apply(long artistId, String artistName, String artistGenre, long venueId, String title, Type type,
-                         OffsetDateTime startsAt, Integer price, OffsetDateTime bookingOpenAt, Boolean queueEnabled,
-                         String sourceHash, OffsetDateTime now) {
+                         OffsetDateTime startsAt, OffsetDateTime endsAt, Integer price, OffsetDateTime bookingOpenAt,
+                         Boolean queueEnabled, String sourceHash, OffsetDateTime now) {
         boolean nextQueue = queueEnabled == null ? this.queueEnabled : queueEnabled;
         boolean changed = !Objects.equals(this.artistId, artistId) || !Objects.equals(this.artistName, artistName)
                 || !Objects.equals(this.artistGenre, artistGenre) || !Objects.equals(this.venueId, venueId)
                 || !Objects.equals(this.title, title) || this.type != type || !sameInstant(this.startsAt, startsAt)
-                || !Objects.equals(this.price, price) || !sameInstant(this.bookingOpenAt, bookingOpenAt)
+                || !sameInstant(this.endsAt, endsAt) || !Objects.equals(this.price, price) || !sameInstant(this.bookingOpenAt, bookingOpenAt)
                 || this.queueEnabled != nextQueue;
         this.artistId = artistId;
         this.artistName = artistName;
@@ -85,6 +88,7 @@ public class ConcertEntity {
         this.title = title;
         this.type = type;
         this.startsAt = startsAt;
+        this.endsAt = endsAt;
         this.price = price;
         this.bookingOpenAt = bookingOpenAt;
         this.queueEnabled = nextQueue;
@@ -113,6 +117,7 @@ public class ConcertEntity {
     public String getTitle() { return title; }
     public Type getType() { return type; }
     public OffsetDateTime getStartsAt() { return startsAt; }
+    public OffsetDateTime getEndsAt() { return endsAt; }
     public Integer getPrice() { return price; }
     public OffsetDateTime getBookingOpenAt() { return bookingOpenAt; }
     public boolean isQueueEnabled() { return queueEnabled; }
