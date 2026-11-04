@@ -1,5 +1,7 @@
 package com.indie.concert.global.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.indie.concert.domain.seat.dto.response.SeatMap;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.SocketOptions;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -10,7 +12,10 @@ import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.RedisSerializer;
 
 import java.time.Duration;
 
@@ -19,6 +24,7 @@ import java.time.Duration;
  * <pre>
  * queueRedis  대기열 · 입장 토큰       noeviction — 밀려나면 순번 · 입장권이 사라집니다
  * cacheRedis  분산 락 · 좌석 캐시      allkeys-lru — 밀려나도 DB 조건부 UPDATE 가 최종 보장
+ *   seatCacheRedis  concert:cache:seats:{id} → SeatMap JSON (같은 cacheRedis 연결 · 62B 타입 템플릿)
  * </pre>
  * 타임아웃 300ms · 끊겨 있으면 명령을 쌓지 않고 바로 실패 — 대기열은 DB 폴백(degraded), 락 · 캐시는 건너뜁니다.
  */
@@ -45,6 +51,16 @@ public class RedisConfig {
     @Bean
     public StringRedisTemplate cacheRedis(@Qualifier("cacheRedisConnectionFactory") RedisConnectionFactory factory) {
         return new StringRedisTemplate(factory);
+    }
+
+    @Bean
+    public RedisTemplate<String, SeatMap> seatCacheRedis(
+            @Qualifier("cacheRedisConnectionFactory") RedisConnectionFactory factory, ObjectMapper objectMapper) {
+        RedisTemplate<String, SeatMap> template = new RedisTemplate<>();
+        template.setConnectionFactory(factory);
+        template.setKeySerializer(RedisSerializer.string());
+        template.setValueSerializer(new Jackson2JsonRedisSerializer<>(objectMapper, SeatMap.class));
+        return template;
     }
 
     private static LettuceConnectionFactory factory(ConcertProperties.Node node) {

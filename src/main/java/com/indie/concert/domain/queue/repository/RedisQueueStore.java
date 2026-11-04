@@ -4,6 +4,7 @@ import com.indie.concert.domain.queue.entity.AdmittedMember;
 import com.indie.concert.domain.queue.entity.QueueMember;
 import com.indie.concert.global.config.ConcertProperties;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
@@ -36,80 +37,34 @@ import java.util.stream.Collectors;
  * queue:snapshotter:{id}    스냅샷 차례                              4초
  * queue:rebuild:{id}        재구성 락                                60초
  * </pre>
+ * Lua 는 resources/redis/*.lua (62B).
  * 🔴 입장 처리 · 토큰 복구 스크립트가 KEYS 밖의 키(alive · entry)를 만집니다 — 단일 인스턴스 전제. 클러스터로 가면 해시태그가 필요합니다.
  */
 @Component
 public class RedisQueueStore implements QueueStore {
 
-    private static final RedisScript<List> ENTER = RedisScript.of("""
-            if redis.call('EXISTS', KEYS[4]) == 1 then return {2, 0, redis.call('ZCARD', KEYS[1])} end
-            local rank = redis.call('ZRANK', KEYS[1], ARGV[1])
-            if rank then
-              redis.call('SET', KEYS[3], '1', 'EX', ARGV[3])
-              return {1, rank, redis.call('ZCARD', KEYS[1])}
-            end
-            local seq = redis.call('INCR', KEYS[2])
-            redis.call('ZADD', KEYS[1], seq, ARGV[1])
-            redis.call('EXPIREAT', KEYS[1], ARGV[2])
-            redis.call('EXPIREAT', KEYS[2], ARGV[2])
-            redis.call('SET', KEYS[3], '1', 'EX', ARGV[3])
-            return {0, redis.call('ZRANK', KEYS[1], ARGV[1]), redis.call('ZCARD', KEYS[1])}
-            """, List.class);
+    private static final RedisScript<List> ENTER =
+            RedisScript.of(new ClassPathResource("redis/queue-enter.lua"), List.class);
 
     /** 반환 — [uid, seq, 1(입장)|0(이탈), uid, seq, …] */
-    private static final RedisScript<List> ADMIT = RedisScript.of("""
-            local out = {}
-            local want = #ARGV - 3
-            local given, pops = 0, 0
-            while given < want and pops < tonumber(ARGV[2]) do
-              local p = redis.call('ZPOPMIN', KEYS[1])
-              if #p == 0 then break end
-              pops = pops + 1
-              if redis.call('EXISTS', 'queue:alive:' .. ARGV[1] .. ':' .. p[1]) == 1 then
-                given = given + 1
-                redis.call('SET', 'entry:' .. ARGV[1] .. ':' .. p[1], ARGV[3 + given], 'EX', ARGV[3])
-                table.insert(out, p[1]); table.insert(out, p[2]); table.insert(out, '1')
-              else
-                table.insert(out, p[1]); table.insert(out, p[2]); table.insert(out, '0')
-              end
-            end
-            return out
-            """, List.class);
+    private static final RedisScript<List> ADMIT =
+            RedisScript.of(new ClassPathResource("redis/queue-admit.lua"), List.class);
 
     /** ARGV — concertId, (uid, token, ttlMs) × N */
-    private static final RedisScript<Long> RESTORE_ENTRIES = RedisScript.of("""
-            for i = 2, #ARGV, 3 do
-              redis.call('SET', 'entry:' .. ARGV[1] .. ':' .. ARGV[i], ARGV[i + 1], 'PX', ARGV[i + 2], 'NX')
-            end
-            return 1
-            """, Long.class);
+    private static final RedisScript<Long> RESTORE_ENTRIES =
+            RedisScript.of(new ClassPathResource("redis/queue-restore-entries.lua"), Long.class);
 
-    private static final RedisScript<Long> LEAD = RedisScript.of("""
-            if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('PEXPIRE', KEYS[1], ARGV[2]) return 1 end
-            if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ARGV[2]) then return 1 end
-            return 0
-            """, Long.class);
+    private static final RedisScript<Long> LEAD =
+            RedisScript.of(new ClassPathResource("redis/queue-lead.lua"), Long.class);
 
-    private static final RedisScript<String> LEAVE = RedisScript.of("""
-            local s = redis.call('ZSCORE', KEYS[1], ARGV[1])
-            redis.call('ZREM', KEYS[1], ARGV[1])
-            redis.call('DEL', KEYS[2], KEYS[3])
-            return s
-            """, String.class);
+    private static final RedisScript<String> LEAVE =
+            RedisScript.of(new ClassPathResource("redis/queue-leave.lua"), String.class);
 
-    private static final RedisScript<Long> UNLOCK = RedisScript.of("""
-            if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
-            return 0
-            """, Long.class);
+    private static final RedisScript<Long> UNLOCK =
+            RedisScript.of(new ClassPathResource("redis/unlock-if-owner.lua"), Long.class);
 
-    private static final RedisScript<Long> MARK_READY = RedisScript.of("""
-            local cur = tonumber(redis.call('GET', KEYS[1]) or '0')
-            if tonumber(ARGV[1]) > cur then redis.call('SET', KEYS[1], ARGV[1]) end
-            redis.call('SET', KEYS[2], ARGV[1])
-            redis.call('SET', KEYS[3], '1')
-            for i = 1, 4 do redis.call('EXPIREAT', KEYS[i], ARGV[2]) end
-            return 1
-            """, Long.class);
+    private static final RedisScript<Long> MARK_READY =
+            RedisScript.of(new ClassPathResource("redis/queue-mark-ready.lua"), Long.class);
 
     private final StringRedisTemplate redis;
     private final long aliveTtlSeconds;
