@@ -8,6 +8,7 @@ public enum BookingErrorCode implements BaseErrorCode {
 
     ALREADY_PAID(HttpStatus.CONFLICT, "이미 결제된 예매입니다 — 예매 취소를 이용해주세요"),
     SELECTION_EXPIRED(HttpStatus.CONFLICT, "좌석 선택이 만료되었습니다. 좌석을 다시 선택해주세요"),
+    BOOKING_CANCELLED(HttpStatus.CONFLICT, "취소된 예매입니다. 좌석을 다시 선택해주세요"),   // 결제 거절 · 결제 준비 실패 · 사용자 취소
     BOOKING_NOT_CANCELLABLE(HttpStatus.CONFLICT, "취소할 수 없는 예매입니다"),
     PAYMENT_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "결제를 처리하지 못했습니다. 잠시 후 다시 시도해주세요"),
 

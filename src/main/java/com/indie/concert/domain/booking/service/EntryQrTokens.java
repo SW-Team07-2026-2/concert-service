@@ -10,6 +10,8 @@ import com.nimbusds.jose.crypto.MACSigner;
 import com.nimbusds.jose.crypto.MACVerifier;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -28,6 +30,7 @@ import java.util.Date;
 public class EntryQrTokens {
 
     static final String TYPE = "entry";
+    private static final Logger log = LoggerFactory.getLogger(EntryQrTokens.class);
 
     private final MACSigner signer;
     private final MACVerifier verifier;
@@ -59,30 +62,36 @@ public class EntryQrTokens {
         return new Issued(jwt.serialize(), exp);
     }
 
-    /** 서명 · typ 가 틀리면 ENTRY_QR_INVALID, 서명은 맞는데 시간이 지났으면 ENTRY_QR_EXPIRED (캡처본) */
+    /** 서명 · typ 가 틀리면 ENTRY_QR_INVALID (어느 검사인지는 로그), 서명은 맞는데 시간이 지났으면 ENTRY_QR_EXPIRED (캡처본) */
     public Claims verify(String token) {
         Long bookingId;
         Long concertId;
         Date exp;
         try {
             SignedJWT jwt = SignedJWT.parse(token);
-            if (!JWSAlgorithm.HS256.equals(jwt.getHeader().getAlgorithm()) || !jwt.verify(verifier)) {   // ★ alg 고정
-                throw new GeneralException(BookingErrorCode.ENTRY_QR_INVALID);
-            }
+            if (!JWSAlgorithm.HS256.equals(jwt.getHeader().getAlgorithm())) throw invalid("alg");   // ★ alg 고정
+            if (!jwt.verify(verifier)) throw invalid("signature");
             JWTClaimsSet c = jwt.getJWTClaimsSet();
             bookingId = c.getLongClaim("bid");
             concertId = c.getLongClaim("cid");
             exp = c.getExpirationTime();
-            if (!TYPE.equals(c.getStringClaim("typ")) || bookingId == null || concertId == null || exp == null) {
-                throw new GeneralException(BookingErrorCode.ENTRY_QR_INVALID);
-            }
+            if (!TYPE.equals(c.getStringClaim("typ"))) throw invalid("typ");
+            if (bookingId == null) throw invalid("bid");
+            if (concertId == null) throw invalid("cid");
+            if (exp == null) throw invalid("exp");
         } catch (ParseException | JOSEException e) {
-            throw new GeneralException(BookingErrorCode.ENTRY_QR_INVALID);
+            throw invalid("parse");
         }
         if (!exp.toInstant().isAfter(clock.instant())) {
             throw new GeneralException(BookingErrorCode.ENTRY_QR_EXPIRED);
         }
         return new Claims(bookingId, concertId);
+    }
+
+    /** 검표 화면에는 "입장 QR 이 아닙니다" 하나 — 위조 QR 에 어디서 걸렸는지 알려주지 않습니다 */
+    private static GeneralException invalid(String reason) {
+        log.warn("entry_qr_rejected reason={}", reason);
+        return new GeneralException(BookingErrorCode.ENTRY_QR_INVALID);
     }
 
     public record Issued(String token, Instant expiresAt) {}

@@ -245,6 +245,23 @@ class BookingServiceTest {
         verify(seats, never()).claim(anyLong(), anyLong(), anyLong(), any());
     }
 
+    /** 만료 처리기가 정리한 예매는 SELECTION_EXPIRED, 결제 거절 · 취소된 예매는 BOOKING_CANCELLED */
+    @Test
+    void closedBookingsCannotPayWithOwnCodes() {
+        BookingEntity expired = pending(9L, NOW_AT);
+        when(expired.getStatus()).thenReturn(BookingEntity.Status.EXPIRED);
+        BookingEntity cancelled = pending(10L, NOW_AT);
+        when(cancelled.getStatus()).thenReturn(BookingEntity.Status.CANCELLED);
+        when(bookings.findByIdAndUserId(9L, 3L)).thenReturn(Optional.of(expired));
+        when(bookings.findByIdAndUserId(10L, 3L)).thenReturn(Optional.of(cancelled));
+
+        assertThatThrownBy(() -> service.pay(3L, 9L, "pk-9", 55000, null))
+                .extracting(e -> ((GeneralException) e).getErrorCode().getCode()).isEqualTo("SELECTION_EXPIRED");
+        assertThatThrownBy(() -> service.pay(3L, 10L, "pk-10", 55000, null))
+                .extracting(e -> ((GeneralException) e).getErrorCode().getCode()).isEqualTo("BOOKING_CANCELLED");
+        verify(seats, never()).claim(anyLong(), anyLong(), anyLong(), any());
+    }
+
     private void selectable(long seatId) {
         ConcertEntity concert = mock(ConcertEntity.class);
         when(concert.getId()).thenReturn(1L);
