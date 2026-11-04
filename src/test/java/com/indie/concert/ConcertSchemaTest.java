@@ -1,5 +1,6 @@
 package com.indie.concert;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indie.concert.domain.booking.entity.BookingEntity;
 import com.indie.concert.domain.booking.repository.BookingRepository;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
@@ -7,14 +8,17 @@ import com.indie.concert.domain.queue.entity.AdmittedMember;
 import com.indie.concert.domain.queue.entity.QueueEntryEntity;
 import com.indie.concert.domain.queue.repository.QueueEntryRepository;
 import com.indie.concert.domain.queue.entity.QueueMember;
-import com.indie.concert.domain.queue.repository.JdbcQueueEntryRepository;
+import com.indie.concert.domain.queue.repository.QueueEntryRepositoryAdapter;
 import com.indie.concert.domain.seat.repository.SeatRepository;
 import com.indie.concert.domain.stage.entity.StageDrawingEntity;
 import com.indie.concert.domain.stage.repository.StageDrawingRepository;
+import com.indie.concert.global.outbox.OutboxAppender;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -31,6 +35,7 @@ import org.testcontainers.utility.DockerImageName;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -47,7 +52,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Testcontainers(disabledWithoutDocker = true)
 @DataJpaTest(properties = "spring.jpa.hibernate.ddl-auto=validate")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import(JdbcQueueEntryRepository.class)
+@Import({QueueEntryRepositoryAdapter.class, OutboxAppender.class, ConcertSchemaTest.Beans.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class ConcertSchemaTest {
 
@@ -62,6 +67,11 @@ class ConcertSchemaTest {
         registry.add("spring.datasource.password", POSTGRES::getPassword);
     }
 
+    @TestConfiguration
+    static class Beans {
+        @Bean ObjectMapper objectMapper() { return new ObjectMapper().findAndRegisterModules(); }
+    }
+
     @Autowired SeatRepository seatRepository;
     @Autowired ConcertRepository concertRepository;
     @Autowired BookingRepository bookingRepository;
@@ -69,6 +79,7 @@ class ConcertSchemaTest {
     @Autowired StageDrawingRepository stageDrawings;
     @Autowired JdbcTemplate jdbc;
     @Autowired TransactionTemplate tx;
+    @Autowired OutboxAppender outbox;
 
     /** ★ 같은 좌석을 고른 20명이 동시에 결제 승인 → 확보는 정확히 1명 (락 없이 조건부 UPDATE 만으로 — FR-CON-23 · 27) */
     @Test
@@ -206,6 +217,15 @@ class ConcertSchemaTest {
         assertThat(queueEntries.findAdmittedSince(concertId, now.plusSeconds(1))).isEmpty();
         assertThat(jdbc.queryForObject("SELECT entry_token FROM queue_entry WHERE concert_id = ? AND user_id = 2",
                 String.class, concertId)).isNull();
+    }
+
+    /** 업무 트랜잭션 안에서 jsonb 로 저장 */
+    @Test
+    void outboxStoresJsonbPayloadInTransaction() {
+        tx.executeWithoutResult(s -> outbox.publish("concert.test", Map.of("concertId", 7)));
+
+        assertThat(jdbc.queryForObject("SELECT payload->>'concertId' FROM outbox WHERE event_type = 'concert.test'",
+                String.class)).isEqualTo("7");
     }
 
     @Test

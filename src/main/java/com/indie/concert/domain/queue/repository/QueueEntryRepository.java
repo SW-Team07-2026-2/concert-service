@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * 대기열 스냅샷 저장소 포트 — 구현은 JdbcQueueEntryRepository (배치 upsert).
+ * 대기열 스냅샷 저장소 포트 — 구현은 QueueEntryRepositoryAdapter (unnest 배치 upsert · QueueEntryJpaRepository).
  * 모든 upsert 는 seq 가 같거나 커질 때만 덮어씁니다 — 늦게 도착한 스냅샷이 입장 · 이탈 기록을 되돌리지 않습니다.
  */
 public interface QueueEntryRepository {
