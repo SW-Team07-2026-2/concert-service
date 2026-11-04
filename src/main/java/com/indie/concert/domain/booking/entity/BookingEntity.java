@@ -15,7 +15,7 @@ import java.time.OffsetDateTime;
  * <pre>
  * PENDING ──결제 승인──▶ CONFIRMED ──취소──▶ CANCELLED
  *    ├── 결제 실패 · 취소 ──▶ CANCELLED
- *    └── 점유 3분 경과 ────▶ EXPIRED        (08 §8.6 — ERD 에 없던 상태)
+ *    └── 선택 5분 + 60초 경과 ▶ EXPIRED     (08 §8.6 — ERD 에 없던 상태)
  * </pre>
  * 입장(검표)은 상태가 아니라 checked_in_at 으로 남깁니다 — CONFIRMED 그대로, 한 번만 기록 (11/01).
  */

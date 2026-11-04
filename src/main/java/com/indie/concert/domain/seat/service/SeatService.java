@@ -55,7 +55,8 @@ public class SeatService {
     public SeatMap seats(long concertId) {
         return seatCache.get(concertId).orElseGet(() -> {
             concertRepository.findById(concertId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
-            OffsetDateTime selectedAfter = OffsetDateTime.now(clock).minusMinutes(props.selectMinutes());
+            OffsetDateTime selectedAfter = OffsetDateTime.now(clock).minusMinutes(props.selectMinutes())
+                    .minusSeconds(props.selectGraceSeconds());   // 서버가 아직 결제를 받아 주는 선택까지 경합
             Set<Long> contested = new HashSet<>(bookingRepository.findPendingSeatIds(concertId, selectedAfter));
             List<SeatView> seats = seatRepository.findByConcertIdOrderById(concertId).stream()
                     .map(s -> new SeatView(s.getId(), s.getSection(), s.getRowNo(), s.getSeatNo(), s.getPrice(), status(s, contested)))

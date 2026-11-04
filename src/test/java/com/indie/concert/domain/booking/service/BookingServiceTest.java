@@ -2,6 +2,7 @@ package com.indie.concert.domain.booking.service;
 
 import com.indie.concert.domain.booking.client.PaymentClient;
 import com.indie.concert.domain.booking.dto.event.BookingEvents;
+import com.indie.concert.domain.booking.dto.response.BookingCreated;
 import com.indie.concert.domain.booking.dto.response.BookingPaid;
 import com.indie.concert.domain.booking.entity.BookingEntity;
 import com.indie.concert.domain.booking.entity.BookingSeatEntity;
@@ -59,13 +60,14 @@ class BookingServiceTest {
     private final BookingService service = new BookingService(bookings, bookingSeats, seats, concerts,
             mock(VenueRepository.class), mock(QueueService.class), payment, lock, mock(BookingEvents.class),
             new TransactionTemplate(mock(PlatformTransactionManager.class)),
-            new ConcertProperties(null, null, null, "Asia/Seoul", new ConcertProperties.Booking(3, 30, 24, 30000, 3000),
+            new ConcertProperties(null, null, null, "Asia/Seoul", new ConcertProperties.Booking(5, 60, 30, 24, 30000, 3000),
                     null, null, null, null, null, null),
             Clock.fixed(NOW, ZoneOffset.UTC));
 
+    /** 정리 기준은 서버 마감 — 고른 지 5분 + 60초 */
     @Test
     void expiryCancelsPaymentBeforeReleasingSeat() {
-        when(bookings.findExpiredPending(any(), any(), eq(50))).thenReturn(List.of(5L));
+        when(bookings.findExpiredPending(NOW_AT, NOW_AT.minusMinutes(6), 50)).thenReturn(List.of(5L));
         when(payment.cancel(5L, "EXPIRED", false)).thenReturn("CANCELLED");
         when(bookings.expire(5L)).thenReturn(1);
 
@@ -234,9 +236,64 @@ class BookingServiceTest {
         verify(bookings, never()).cancel(anyLong());
     }
 
+    /** 화면 타이머 5분 · 서버 마감은 60초 더 — 결제창 안에서 0초를 넘긴 사람도 승인까지 갑니다 (11/04 S1A) */
+    @Test
+    void paymentIsAcceptedWithinGraceAfterTimerEnds() {
+        payable(9L, 77L, NOW_AT.minusMinutes(5).minusSeconds(30));
+        when(seats.claim(eq(77L), eq(9L), eq(3L), any())).thenReturn(1);
+        when(payment.confirm(9L, 3L, "pk-9", 55000, null)).thenReturn(new PaymentClient.Confirmed("APPROVED", null));
+        when(bookings.confirm(9L)).thenReturn(1);
+        when(concerts.findById(1L)).thenReturn(Optional.of(mock(ConcertEntity.class)));
+
+        assertThat(service.pay(3L, 9L, "pk-9", 55000, null).status()).isEqualTo("CONFIRMED");
+    }
+
+    /** 응답의 expiresIn(남은 초)으로 프론트가 타이머를 돌립니다 — 기기 시계와 무관 */
+    @Test
+    void newSelectionReturnsTimerInSeconds() {
+        selectable(77L);
+        when(bookings.findActive(1L, 3L)).thenReturn(Optional.empty());
+        BookingEntity saved = pending(9L, NOW_AT);
+        when(bookings.save(any())).thenReturn(saved);
+        when(payment.prepare(9L, 3L, 55000)).thenReturn(new PaymentClient.Prepared("TICKET-9", "PENDING", null));
+
+        BookingCreated created = service.create(1L, 3L, "token", 77L);
+
+        assertThat(created.expiresAt()).isEqualTo(NOW_AT.plusMinutes(5));
+        assertThat(created.expiresIn()).isEqualTo(300);
+    }
+
+    /** 같은 좌석을 다시 골라도 타이머는 그대로 — 새로고침으로 늘릴 수 없음. 0초 뒤에 다시 고르면 새 5분 */
+    @Test
+    void sameSeatKeepsTimerUntilItEnds() {
+        selectable(77L);
+        BookingEntity running = pending(8L, NOW_AT.minusMinutes(2));
+        when(running.getPgOrderId()).thenReturn("TICKET-8");
+        when(bookings.findActive(1L, 3L)).thenReturn(Optional.of(running));
+        when(bookingSeats.findByBookingId(8L)).thenReturn(List.of(new BookingSeatEntity(8L, 77L)));
+
+        BookingCreated again = service.create(1L, 3L, "token", 77L);
+        assertThat(again.bookingId()).isEqualTo(8L);
+        assertThat(again.expiresIn()).isEqualTo(180);
+        verify(bookings, never()).save(any());
+
+        BookingEntity ended = pending(8L, NOW_AT.minusMinutes(5).minusSeconds(10));
+        when(ended.getPgOrderId()).thenReturn("TICKET-8");
+        when(bookings.findActive(1L, 3L)).thenReturn(Optional.of(ended));
+        when(payment.cancel(8L, "SEAT_CHANGED", false)).thenReturn("CANCELLED");
+        when(bookings.cancel(8L)).thenReturn(1);
+        BookingEntity saved = pending(9L, NOW_AT);
+        when(bookings.save(any())).thenReturn(saved);
+        when(payment.prepare(9L, 3L, 55000)).thenReturn(new PaymentClient.Prepared("TICKET-9", "PENDING", null));
+
+        BookingCreated fresh = service.create(1L, 3L, "token", 77L);
+        assertThat(fresh.bookingId()).isEqualTo(9L);
+        assertThat(fresh.expiresIn()).isEqualTo(300);
+    }
+
     @Test
     void expiredSelectionCannotPay() {
-        BookingEntity b = pending(9L, NOW_AT.minusMinutes(4));
+        BookingEntity b = pending(9L, NOW_AT.minusMinutes(6).minusSeconds(1));
         when(bookings.findByIdAndUserId(9L, 3L)).thenReturn(Optional.of(b));
 
         assertThatThrownBy(() -> service.pay(3L, 9L, "pk-9", 55000, null))
@@ -275,7 +332,11 @@ class BookingServiceTest {
     }
 
     private void payable(long bookingId, long seatId) {
-        BookingEntity b = pending(bookingId, NOW_AT.minusMinutes(1));
+        payable(bookingId, seatId, NOW_AT.minusMinutes(1));
+    }
+
+    private void payable(long bookingId, long seatId, OffsetDateTime selectedAt) {
+        BookingEntity b = pending(bookingId, selectedAt);
         when(b.getConcertId()).thenReturn(1L);
         when(bookings.findByIdAndUserId(bookingId, 3L)).thenReturn(Optional.of(b));
         when(bookings.findById(bookingId)).thenReturn(Optional.of(b));

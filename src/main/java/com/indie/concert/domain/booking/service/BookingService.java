@@ -50,7 +50,7 @@ import java.util.stream.Collectors;
  * ① 좌석 고름(N10) → booking PENDING + Payment prepare     좌석은 잡지 않음 — 같은 좌석을 여러 명이 고를 수 있음
  * ② ★ 결제 승인(N16) → 좌석 확보 (조건부 UPDATE AVAILABLE → HELD)   0행 = 먼저 결제한 사람이 있음 → 돈이 나가기 전에 409
  * ③ Payment 내부 승인 (동기) → APPROVED: CONFIRMED · SOLD · booking.completed   DECLINED: CANCELLED · 좌석은 다시 경합
- * ④ 3분 안에 결제하지 않은 선택 · 승인 응답을 못 받은 확보 → 결제 무효화 → EXPIRED (BookingExpiryJob)
+ * ④ 5분(+ 유예 60초) 안에 결제하지 않은 선택 · 승인 응답을 못 받은 확보 → 결제 무효화 → EXPIRED (BookingExpiryJob)
  * </pre>
  * 🔴 좌석을 푸는 모든 경로는 Payment 를 먼저 끝냅니다 — 순서가 반대면 "좌석은 다른 사람에게 팔렸는데 결제는 승인됨"이 생깁니다.
  */
@@ -104,8 +104,8 @@ public class BookingService {
             if (active.isPresent()) {
                 BookingEntity b = active.get();
                 if (b.getStatus() == BookingEntity.Status.CONFIRMED) throw new GeneralException(SeatErrorCode.SEAT_LIMIT_EXCEEDED);
-                if (b.getPgOrderId() != null && seatOf(b.getId()) == seatId && isOpen(b)) {
-                    return new BookingCreated(b.getId(), b.getTotalPrice(), b.getPgOrderId(), "PENDING", expiresAt(b));
+                if (b.getPgOrderId() != null && seatOf(b.getId()) == seatId && expiresAt(b).isAfter(OffsetDateTime.now(clock))) {
+                    return created(b, b.getPgOrderId());   // 화면 타이머가 남았을 때만 이어서 — 0초 뒤 다시 고르면 새 5분
                 }
                 drop(b.getId());
             }
@@ -127,7 +127,7 @@ public class BookingService {
                 throw paymentUnavailable("결제를 준비하지 못했습니다. 잠시 후 다시 시도해주세요");
             }
             tx.executeWithoutResult(s -> bookingRepository.attachPgOrderId(booking.getId(), prepared.pgOrderId()));
-            return new BookingCreated(booking.getId(), booking.getTotalPrice(), prepared.pgOrderId(), "PENDING", expiresAt(booking));
+            return created(booking, prepared.pgOrderId());
         }
     }
 
@@ -140,7 +140,7 @@ public class BookingService {
         if (b.getStatus() == BookingEntity.Status.CONFIRMED) throw new GeneralException(BookingErrorCode.ALREADY_PAID);
         if (b.getStatus() == BookingEntity.Status.CANCELLED) throw new GeneralException(BookingErrorCode.BOOKING_CANCELLED);
         if (b.getStatus() == BookingEntity.Status.EXPIRED) throw new GeneralException(BookingErrorCode.SELECTION_EXPIRED);   // 만료 처리기가 정리함
-        if (!isOpen(b)) throw new GeneralException(BookingErrorCode.SELECTION_EXPIRED);   // 3분은 지났는데 처리기(30초)가 아직 안 돎
+        if (!isOpen(b)) throw new GeneralException(BookingErrorCode.SELECTION_EXPIRED);   // 서버 마감(5분 + 60초)은 지났는데 처리기(30초)가 아직 안 돎
         long seatId = seatOf(bookingId);
         OffsetDateTime until = OffsetDateTime.now(clock).plusSeconds(props.claimSeconds());
         Integer claimed = tx.execute(s -> seatRepository.claim(seatId, bookingId, userId, until));
@@ -194,6 +194,7 @@ public class BookingService {
                 .map(bs -> seatRepository.findById(bs.getSeatId()).orElseThrow()).toList();
         return new BookingDetail(b.getId(), b.getStatus().name(), b.getTotalPrice(), b.getPgOrderId(), b.getCreatedAt(),
                 b.getStatus() == BookingEntity.Status.PENDING ? expiresAt(b) : null,
+                b.getStatus() == BookingEntity.Status.PENDING ? expiresIn(b) : null,
                 new ConcertRef(c.getId(), c.getTitle(), c.getStartsAt(), v.getName()),
                 seats.stream().map(s -> new SeatRef(s.getId(), s.getSection(), s.getRowNo(), s.getSeatNo(), s.getPrice())).toList());
     }
@@ -243,12 +244,13 @@ public class BookingService {
     }
 
     /**
-     * 선택 3분이 지난 결제 대기 예매 · 승인 응답을 못 받은 확보 정리. Payment 를 먼저 무효화합니다 (refundApproved=false) —
+     * 서버 마감(선택 5분 + 유예 60초)이 지난 결제 대기 예매 · 승인 응답을 못 받은 확보 정리. Payment 를 먼저 무효화합니다 (refundApproved=false) —
      * 그 사이 결제가 승인됐다면 APPROVED 가 돌아오고 예매는 건드리지 않습니다 (payment.completed 가 곧 확정).
      */
     public void expirePending(int batch) {
         OffsetDateTime now = OffsetDateTime.now(clock);
-        for (Long bookingId : bookingRepository.findExpiredPending(now, now.minusMinutes(props.selectMinutes()), batch)) {
+        OffsetDateTime selectedBefore = now.minusMinutes(props.selectMinutes()).minusSeconds(props.selectGraceSeconds());
+        for (Long bookingId : bookingRepository.findExpiredPending(now, selectedBefore, batch)) {
             String status;
             try {
                 status = paymentClient.cancel(bookingId, "EXPIRED", false);
@@ -298,12 +300,23 @@ public class BookingService {
         return bookingSeatRepository.findByBookingId(bookingId).get(0).getSeatId();
     }
 
+    private BookingCreated created(BookingEntity b, String pgOrderId) {
+        return new BookingCreated(b.getId(), b.getTotalPrice(), pgOrderId, "PENDING", expiresAt(b), expiresIn(b));
+    }
+
+    /** 화면 마감 — 프론트 타이머가 0 이 되는 시각 */
     private OffsetDateTime expiresAt(BookingEntity b) {
         return b.getCreatedAt().plusMinutes(props.selectMinutes());
     }
 
+    /** 화면 마감까지 남은 초 — 프론트는 이 값으로 타이머를 돌립니다 (기기 시계가 틀려도 맞음) */
+    private long expiresIn(BookingEntity b) {
+        return Math.max(0, Duration.between(OffsetDateTime.now(clock), expiresAt(b)).toSeconds());
+    }
+
+    /** 서버 마감 = 화면 마감 + 유예 — 결제창 안에서 0초를 넘긴 사람도 받아 줍니다 (돈은 N16 뒤에 나감) */
     private boolean isOpen(BookingEntity b) {
-        return expiresAt(b).isAfter(OffsetDateTime.now(clock));
+        return expiresAt(b).plusSeconds(props.selectGraceSeconds()).isAfter(OffsetDateTime.now(clock));
     }
 
     private SeatLock.Handle lockOrConflict(String key) {
