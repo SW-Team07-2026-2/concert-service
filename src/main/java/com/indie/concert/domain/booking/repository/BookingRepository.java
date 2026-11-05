@@ -27,7 +27,16 @@ public interface BookingRepository {
 
     BookingEntity save(BookingEntity booking);
 
+    /** null 이면 떼어냄 — 거절 뒤 새 결제를 준비하기 전 (다시 부르면 새로 준비하게 · 80B) */
     int attachPgOrderId(long id, String pgOrderId);
+
+    /** 선점 서버 마감 = DB now() + seconds (N10 · 같은 트랜잭션에서 좌석 선점 전에) */
+    int startHold(long id, long seconds);
+
+    /** 결제 승인 시작 · 끝 — paying_at = now() / NULL */
+    int markPaying(long id);
+
+    int clearPaying(long id);
 
     /** PENDING → CONFIRMED. 0 = 이미 전이됨 */
     int confirm(long id);
@@ -41,9 +50,9 @@ public interface BookingRepository {
     /** 입장 — CONFIRMED 이고 아직 입장 전일 때만 기록. 0 = 이미 입장했거나 취소됨 (같은 QR 을 동시에 두 번 찍어도 한 번만) */
     int checkIn(long id, long checkerId, OffsetDateTime at);
 
-    /** 정리할 결제 대기 예매 — 고른 지 selectedBefore 이전이고 승인 중이 아닌 것 · 승인 응답을 못 받은 채 claim 시간이 지난 것 */
-    List<Long> findExpiredPending(OffsetDateTime now, OffsetDateTime selectedBefore, int limit);
+    /** 정리할 선점 — 서버 마감(DB now())이 지났고 결제 중이 아닌 PENDING (idx_booking_hold) */
+    List<Long> findExpiredHolds(int limit);
 
-    /** 경합 표시 — 이 공연에서 결제 대기 예매가 걸린 좌석 (createdAfter 이후에 고른 것만 · 만료된 선택 제외) */
-    List<Long> findPendingSeatIds(long concertId, OffsetDateTime createdAfter);
+    /** 결제 승인 응답을 못 받은 채 seconds 가 지난 PENDING — Payment 에 결과를 묻습니다 (81A · 1분) */
+    List<Long> findStalePaying(long seconds, int limit);
 }

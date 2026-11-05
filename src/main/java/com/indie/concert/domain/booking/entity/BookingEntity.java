@@ -13,10 +13,11 @@ import java.time.OffsetDateTime;
 /**
  * booking — 상태 전이는 BookingRepository 의 조건부 UPDATE 로만 합니다 (중복 이벤트에도 한 번만 전이).
  * <pre>
- * PENDING ──결제 승인──▶ CONFIRMED ──취소──▶ CANCELLED
- *    ├── 결제 실패 · 취소 ──▶ CANCELLED
- *    └── 선택 5분 + 60초 경과 ▶ EXPIRED     (08 §8.6 — ERD 에 없던 상태)
+ * PENDING(= 선점) ──결제 승인──▶ CONFIRMED ──취소──▶ CANCELLED
+ *    ├── 선택 취소 ──▶ CANCELLED
+ *    └── 선점 마감(서버 9분) 뒤 정리 ▶ EXPIRED     (08 §8.6 — ERD 에 없던 상태)
  * </pre>
+ * 11/04 77A — 예매 PENDING 이 곧 선점(holdId = bookingId)입니다. 결제가 거절돼도 PENDING 그대로 (새 결제로 다시 · 80B).
  * 입장(검표)은 상태가 아니라 checked_in_at 으로 남깁니다 — CONFIRMED 그대로, 한 번만 기록 (11/01).
  */
 @Entity
@@ -42,6 +43,12 @@ public class BookingEntity {
 
     private OffsetDateTime createdAt;
 
+    /** 선점 서버 마감 — N10 때 DB now() + 9분 (화면 마감은 60초 앞) */
+    private OffsetDateTime holdExpiresAt;
+
+    /** 결제 승인 시작 (좌석 PAYING) — 응답을 못 받으면 1분 뒤 정리 */
+    private OffsetDateTime payingAt;
+
     private OffsetDateTime checkedInAt;
 
     private Long checkedInBy;
@@ -63,5 +70,7 @@ public class BookingEntity {
     public Integer getTotalPrice() { return totalPrice; }
     public String getPgOrderId() { return pgOrderId; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
+    public OffsetDateTime getHoldExpiresAt() { return holdExpiresAt; }
+    public OffsetDateTime getPayingAt() { return payingAt; }
     public OffsetDateTime getCheckedInAt() { return checkedInAt; }
 }

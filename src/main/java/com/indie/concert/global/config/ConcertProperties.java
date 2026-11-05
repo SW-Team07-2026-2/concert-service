@@ -16,9 +16,12 @@ public record ConcertProperties(Internal internal, InternalToken internalToken, 
 
     public record Payment(String baseUrl, int connectTimeoutMs, int readTimeoutMs) {}
 
-    /** selectMinutes = 화면 타이머 · selectGraceSeconds = 그 뒤에도 서버가 결제 승인을 받아 주는 시간 (11/04 S1A) */
-    public record Booking(long selectMinutes, long selectGraceSeconds, long claimSeconds, long cancelDeadlineHours,
-                          long expiryIntervalMs, long lockTtlMs) {}
+    /**
+     * 11/04 77A 선점 — holdMinutes = 화면 타이머 · holdGraceSeconds = 그 뒤에도 서버가 선점을 지켜 주는 시간 (서버 마감 = 합)
+     * payingCheckSeconds = 결제 승인 응답을 못 받은 PAYING 을 정리가 Payment 에 묻기까지 (81A)
+     */
+    public record Booking(long holdMinutes, long holdGraceSeconds, long payingCheckSeconds, long cancelDeadlineHours,
+                          long expiryIntervalMs) {}
 
     public record Queue(int admitBatch, long admitIntervalMs, int maxPopsPerTick, long snapshotIntervalMs, int snapshotBatch,
                         long aliveTtlSeconds, long entryTtlMinutes, long pollAfterMs, long degradedPollAfterMs,

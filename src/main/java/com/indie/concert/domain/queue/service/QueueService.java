@@ -41,7 +41,7 @@ import java.util.concurrent.TimeUnit;
  * 스냅샷        5초 · 증분 배치        Redis → queue_entry
  * 복구          센티넬이 없으면        queue_entry → ZADD (순서 그대로) + 입장 토큰 (남은 시간만큼) · 다른 replica 가 복구 중이면 DB COUNT 로 degraded
  * </pre>
- * 입장 토큰 검사(requireEntry)도 여기 있습니다 — 좌석 점유 · 예매가 부릅니다 (Gateway 는 관여하지 않음).
+ * 입장 토큰 검사(requireEntry)도 여기 있습니다 — 좌석 선점(N10)만 부릅니다. 결제(N16)는 선점만 봅니다 (Gateway 는 관여하지 않음).
  */
 @Service
 public class QueueService {
@@ -131,7 +131,7 @@ public class QueueService {
     }
 
     /**
-     * 좌석 점유 · 예매 앞단 (FR-CON-21) — 대기열을 켠 공연은 입장 토큰이 맞아야 합니다.
+     * 좌석 선점(N10) 앞단 (FR-CON-21) — 대기열을 켠 공연은 입장 토큰이 맞아야 합니다.
      * 끈 공연은 같은 판매 시각만 검사합니다 (FR-CON-28). 🔴 Redis 를 못 읽으면 통과시키지 않습니다 — 대기열 우회가 됩니다.
      */
     public void requireEntry(ConcertEntity concert, long userId, String entryToken) {

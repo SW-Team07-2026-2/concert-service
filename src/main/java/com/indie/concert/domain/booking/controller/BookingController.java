@@ -38,7 +38,10 @@ public class BookingController {
         this.pageSize = pageSize;
     }
 
-    /** 좌석 고르기(선택완료) — 🔴 요청에 금액 필드가 없습니다. 금액은 좌석 가격으로 서버가 정합니다. 좌석을 잡지는 않습니다 */
+    /**
+     * N10 좌석 선점 — 🔴 요청에 금액 필드가 없습니다. 금액은 좌석 가격으로 서버가 정합니다 (11/04 77A).
+     * 남이 잡은 좌석 409 SEAT_TAKEN · 내 선점이 다른 좌석에 있으면 409 HOLD_EXISTS (result.bookingId — N13 으로 취소한 뒤 다시)
+     */
     @PostMapping("/api/concerts/{id}/bookings")
     public ApiResponse<BookingCreated> create(@CurrentUser Long userId, @PathVariable @Positive long id,
                                          @RequestHeader(value = "X-Entry-Token", required = false) String entryToken,
@@ -47,8 +50,8 @@ public class BookingController {
     }
 
     /**
-     * N16 — 결제 승인. 🔴 티켓은 P1(/api/payments/confirm)이 아니라 여기로 — 좌석을 먼저 확보해야 승인합니다.
-     * 같은 좌석을 다른 사람이 먼저 결제했으면 409 SEAT_UNAVAILABLE ("이미 선택된 좌석입니다") · 돈은 나가지 않습니다.
+     * N16 — 결제 승인. 🔴 티켓은 P1(/api/payments/confirm)이 아니라 여기로 — 내 선점이 살아 있어야 승인합니다.
+     * 선점 마감이 지났으면 410 HOLD_EXPIRED (토스 호출 없음 · 돈 안 나감) · 승인 응답이 없으면 503 PAYMENT_PENDING.
      */
     @PostMapping("/api/concerts/bookings/{id}/confirm")
     public ApiResponse<BookingPaid> confirm(@CurrentUser Long userId, @PathVariable @Positive long id,

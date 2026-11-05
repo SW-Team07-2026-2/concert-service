@@ -6,31 +6,36 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.time.OffsetDateTime;
 
 public interface SeatJpaRepository extends JpaRepository<SeatEntity, Long>, SeatRepository {
 
     @Override
     @Modifying
     @Query(value = """
-            UPDATE seat SET status = 'HELD', held_by = :userId, booking_id = :bookingId, hold_expires_at = :until
-            WHERE id = :seatId AND status = 'AVAILABLE'
-              AND EXISTS (SELECT 1 FROM booking WHERE id = :bookingId AND status = 'PENDING')
+            UPDATE seat SET status = 'HELD', held_by = :userId, booking_id = :bookingId,
+                   hold_expires_at = (SELECT hold_expires_at FROM booking WHERE id = :bookingId)
+            WHERE id = :seatId AND concert_id = :concertId
+              AND (status = 'AVAILABLE' OR (status = 'HELD' AND hold_expires_at < now()))
             """, nativeQuery = true)
-    int claim(@Param("seatId") long seatId, @Param("bookingId") long bookingId, @Param("userId") long userId,
-              @Param("until") OffsetDateTime until);
+    int hold(@Param("seatId") long seatId, @Param("concertId") long concertId, @Param("bookingId") long bookingId,
+             @Param("userId") long userId);
 
     @Override
     @Modifying
     @Query(value = """
-            UPDATE seat SET status = 'AVAILABLE', held_by = NULL, hold_expires_at = NULL, booking_id = NULL
-            WHERE booking_id = :bookingId AND status = 'HELD'
+            UPDATE seat SET status = 'PAYING'
+            WHERE booking_id = :bookingId AND held_by = :userId AND status = 'HELD' AND hold_expires_at > now()
             """, nativeQuery = true)
-    int unclaim(@Param("bookingId") long bookingId);
+    int startPaying(@Param("bookingId") long bookingId, @Param("userId") long userId);
 
     @Override
     @Modifying
-    @Query(value = "UPDATE seat SET status = 'SOLD', hold_expires_at = NULL WHERE booking_id = :bookingId AND status = 'HELD'",
+    @Query(value = "UPDATE seat SET status = 'HELD' WHERE booking_id = :bookingId AND status = 'PAYING'", nativeQuery = true)
+    int stopPaying(@Param("bookingId") long bookingId);
+
+    @Override
+    @Modifying
+    @Query(value = "UPDATE seat SET status = 'SOLD', hold_expires_at = NULL WHERE booking_id = :bookingId AND status = 'PAYING'",
             nativeQuery = true)
     int sell(@Param("bookingId") long bookingId);
 
@@ -41,6 +46,10 @@ public interface SeatJpaRepository extends JpaRepository<SeatEntity, Long>, Seat
             WHERE booking_id = :bookingId
             """, nativeQuery = true)
     int releaseBooking(@Param("bookingId") long bookingId);
+
+    @Override
+    @Query(value = "SELECT CAST(EXTRACT(EPOCH FROM now()) * 1000 AS BIGINT)", nativeQuery = true)
+    long nowMillis();
 
     /** generate_series 한 문장 — 좌석 1만 개도 왕복 1번 (12.4 — 대량 생성은 Concert 쪽에서) */
     @Override
