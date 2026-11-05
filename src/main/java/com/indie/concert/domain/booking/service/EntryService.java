@@ -63,7 +63,7 @@ public class EntryService {
         this.clock = clock;
     }
 
-    /** N17 — 결제된 내 예매 · 입장 전 · 공연 3시간 전 ~ 시작 6시간 뒤에만. 남의 예매는 404 */
+    /** N17 — 결제된 내 예매 · 입장 전 · 공연 3시간 전 ~ 끝 시각(모르면 시작 6시간 뒤)에만. 남의 예매는 404 */
     @Transactional(readOnly = true)
     public EntryQr issue(long userId, long bookingId) {
         BookingEntity b = bookingRepository.findByIdAndUserId(bookingId, userId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
@@ -78,7 +78,8 @@ public class EntryService {
             throw new GeneralException(BookingErrorCode.ENTRY_NOT_OPEN, "공연 시작 " + props.openBeforeHours() + "시간 전부터 입장 QR 이 열립니다")
                     .with("opensAt", opensAt);
         }
-        if (now.isAfter(c.getStartsAt().plusHours(props.closeAfterHours()))) throw new GeneralException(BookingErrorCode.ENTRY_CLOSED);
+        OffsetDateTime closesAt = c.getEndsAt() != null ? c.getEndsAt() : c.getStartsAt().plusHours(props.closeAfterHours());
+        if (now.isAfter(closesAt)) throw new GeneralException(BookingErrorCode.ENTRY_CLOSED);
         EntryQrTokens.Issued qr = tokens.issue(b.getId(), c.getId());
         return new EntryQr(qr.token(), OffsetDateTime.ofInstant(qr.expiresAt(), ZoneOffset.UTC));
     }
@@ -87,8 +88,8 @@ public class EntryService {
     @Transactional(readOnly = true)
     public List<ConcertRef> openConcerts() {
         OffsetDateTime now = OffsetDateTime.now(clock);
-        List<ConcertEntity> concerts = concertRepository.findByStartsAtBetweenOrderByStartsAtAsc(
-                now.minusHours(props.closeAfterHours()), now.plusHours(props.openBeforeHours()));
+        List<ConcertEntity> concerts = concertRepository.findEntryOpen(
+                now, now.plusHours(props.openBeforeHours()), now.minusHours(props.closeAfterHours()));
         Map<Long, VenueEntity> venues = venueRepository.findAllById(concerts.stream().map(ConcertEntity::getVenueId).distinct().toList())
                 .stream().collect(Collectors.toMap(VenueEntity::getId, Function.identity()));
         return concerts.stream().map(c -> new ConcertRef(c.getId(), c.getTitle(), c.getStartsAt(), venues.get(c.getVenueId()).getName())).toList();

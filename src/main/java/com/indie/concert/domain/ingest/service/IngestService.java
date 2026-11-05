@@ -104,6 +104,9 @@ public class IngestService {
         if (u.bookingOpenAt() != null && !u.bookingOpenAt().isBefore(u.startsAt())) {
             throw new GeneralException(CommonErrorCode.INVALID_REQUEST, "booking_open_at 은 starts_at 보다 앞이어야 합니다");
         }
+        if (u.endsAt() != null && !u.endsAt().isAfter(u.startsAt())) {
+            throw new GeneralException(CommonErrorCode.INVALID_REQUEST, "ends_at 은 starts_at 보다 뒤여야 합니다");
+        }
         VenueEntity venue = venueRepository.findByName(u.venue().name().strip())
                 .orElseGet(() -> new VenueEntity(u.venue().name().strip()));
         boolean venueChanged = venue.apply(u.venue().region(), u.venue().address(), u.venue().capacity());
@@ -112,7 +115,7 @@ public class IngestService {
         boolean created = concert == null;
         if (created) concert = new ConcertEntity(u.source(), u.externalId());
         boolean changed = concert.apply(u.artistId(), u.artistName().strip(), u.artistGenre(), venue.getId(), u.title().strip(),
-                u.type(), u.startsAt(), u.price(), u.bookingOpenAt(), u.queueEnabled(), u.sourceHash(), now);
+                u.type(), u.startsAt(), u.endsAt(), u.price(), u.bookingOpenAt(), u.queueEnabled(), u.sourceHash(), now);
         concert = concertRepository.save(concert);
         if (created) events.concertCreated(concert, venue);
         return new ItemResult(u.externalId(), concert.getId(), created ? ItemResult.Result.CREATED

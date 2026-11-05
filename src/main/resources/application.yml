@@ -87,15 +87,15 @@ app:
     read-timeout-ms: 3000                     # 11 §4 — 동기 호출 타임아웃 3초
   zone: Asia/Seoul                            # 캘린더 · 날짜 필터의 하루 경계
   booking:
-    select-minutes: 3                         # FR-CON-15 — 좌석을 고르고(경합 참여) 3분 안에 결제 (입장 토큰 10분 안)
-    claim-seconds: 30                         # 결제 승인 중 좌석 잠금 — Payment 응답을 못 받으면 이 시간 뒤 만료 처리기가 결제 상태로 확정 · 반환
+    hold-minutes: 8                           # 11/04 77A 선점 — 좌석을 고르면(N10) 8분 안에 결제 = 화면 타이머 (티켓링크 '예매 가능 시간')
+    hold-grace-seconds: 60                    # 서버 마감 = 화면 + 60초 (9분) — 토스 결제창 안에서는 타이머가 안 보여서. 토스 '인증 뒤 10분 안 승인' 안쪽
+    paying-check-seconds: 60                  # 81A — 결제 승인 응답을 못 받은 PAYING 은 1분 뒤 정리가 Payment 에 결과를 물음 (Payment↔토스 최악 ≈ 26초)
     cancel-deadline-hours: 24                 # FR-CON-14 — 공연 24시간 전까지 취소
-    expiry-interval-ms: 30000                 # 선택 만료 정리 30초
-    lock-ttl-ms: 3000                         # 08 §8.3 — 사용자 락 PX 3000
+    expiry-interval-ms: 30000                 # 선점 만료 · 결제 응답 없음 정리 30초
   entry:                                      # 입장 QR (11/01 · 암표 방지) — 서명 키는 configtree entry.qr-secret (Concert 만)
     qr-ttl-seconds: 30                        # QR 은 30초 뒤 무효 — 앱은 20초마다 새로 받습니다 (캡처본 되팔기 차단)
     open-before-hours: 3                      # 공연 시작 3시간 전부터 발급 · 🔴 cancel-deadline-hours(24) 보다 짧아야 입장 뒤 환불이 생기지 않습니다
-    close-after-hours: 6                      # 공연 끝 시각이 없어 시작 + 6시간까지 (가안)
+    close-after-hours: 6                      # 공연 끝 시각(ends_at)을 모를 때만 — 시작 + 6시간까지
   queue:
     admit-batch: 20                           # 08 §8.2 — 1초마다 N명 (시작값 20)
     admit-interval-ms: 1000

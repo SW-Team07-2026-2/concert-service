@@ -15,7 +15,7 @@ class ConcertEntityTest {
 
     private static ConcertEntity concert(OffsetDateTime opens) {
         ConcertEntity c = new ConcertEntity("seed", "c-1");
-        c.apply(7L, "새소년", "INDIE", 1L, "단독공연", ConcertEntity.Type.SOLO, STARTS, 55000, opens, null, "h1", STARTS.minusDays(30));
+        c.apply(7L, "새소년", "INDIE", 1L, "단독공연", ConcertEntity.Type.SOLO, STARTS, null, 55000, opens, null, "h1", STARTS.minusDays(30));
         return c;
     }
 
@@ -44,9 +44,9 @@ class ConcertEntityTest {
     void queueIsOnByDefaultAndKeptWhenNotGiven() {
         ConcertEntity c = concert(OPENS);
         assertThat(c.isQueueEnabled()).isTrue();
-        c.apply(7L, "새소년", "INDIE", 1L, "단독공연", ConcertEntity.Type.SOLO, STARTS, 55000, OPENS, false, "h2", STARTS);
+        c.apply(7L, "새소년", "INDIE", 1L, "단독공연", ConcertEntity.Type.SOLO, STARTS, null, 55000, OPENS, false, "h2", STARTS);
         assertThat(c.isQueueEnabled()).isFalse();
-        c.apply(7L, "새소년", "INDIE", 1L, "단독공연", ConcertEntity.Type.SOLO, STARTS, 55000, OPENS, null, "h3", STARTS);
+        c.apply(7L, "새소년", "INDIE", 1L, "단독공연", ConcertEntity.Type.SOLO, STARTS, null, 55000, OPENS, null, "h3", STARTS);
         assertThat(c.isQueueEnabled()).isFalse();
     }
 
@@ -54,7 +54,17 @@ class ConcertEntityTest {
     void sameInstantInAnotherOffsetIsNotAChange() {
         ConcertEntity c = concert(OPENS);
         boolean changed = c.apply(7L, "새소년", "INDIE", 1L, "단독공연", ConcertEntity.Type.SOLO,
-                STARTS.withOffsetSameInstant(ZoneOffset.UTC), 55000, OPENS.withOffsetSameInstant(ZoneOffset.UTC), null, "h2", STARTS);
+                STARTS.withOffsetSameInstant(ZoneOffset.UTC), null, 55000, OPENS.withOffsetSameInstant(ZoneOffset.UTC), null, "h2", STARTS);
         assertThat(changed).isFalse();
+    }
+
+    /** 끝 시각은 원문 값으로 덮어씁니다 — 생기거나 바뀌면 변경 */
+    @Test
+    void endsAtIsStoredAndCountsAsChange() {
+        ConcertEntity c = concert(OPENS);
+        boolean changed = c.apply(7L, "새소년", "INDIE", 1L, "단독공연", ConcertEntity.Type.SOLO,
+                STARTS, STARTS.plusHours(2), 55000, OPENS, null, "h2", STARTS);
+        assertThat(changed).isTrue();
+        assertThat(c.getEndsAt()).isEqualTo(STARTS.plusHours(2));
     }
 }

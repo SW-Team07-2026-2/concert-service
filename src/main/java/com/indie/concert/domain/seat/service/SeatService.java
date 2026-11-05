@@ -1,6 +1,5 @@
 package com.indie.concert.domain.seat.service;
 
-import com.indie.concert.domain.booking.repository.BookingRepository;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
 import com.indie.concert.domain.seat.dto.response.SeatMap;
 import com.indie.concert.domain.seat.dto.response.SeatSection;
@@ -10,23 +9,21 @@ import com.indie.concert.domain.seat.repository.SeatCache;
 import com.indie.concert.domain.seat.repository.SeatRepository;
 import com.indie.concert.global.common.exception.CommonErrorCode;
 import com.indie.concert.global.common.exception.GeneralException;
-import com.indie.concert.global.config.ConcertProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Clock;
+import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.util.HashSet;
+import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Set;
 
 /**
  * 좌석 — 배치 조회(N7) · 일괄 생성(내부). 좌석을 고르고(N10) 결제 승인(N16)하는 흐름은 BookingService 에 있습니다.
  * <pre>
- * 화면 상태 (10/27 · FR-CON-23)
- *   AVAILABLE  미선택   아무도 고르지 않음
- *   CONTESTED  경합     누군가 골랐지만 결제 전 (여러 명 가능) · 결제 승인 중 — 그래도 고를 수 있음
- *   SOLD       선택완료  먼저 결제 승인한 사람에게 팔림
+ * 화면 상태 (11/04 77A 선점 · FR-CON-23)
+ *   AVAILABLE  선택 가능  아무도 잡지 않음 · 선점 마감(DB now())이 지남 — 정리 전이라도 바로 고를 수 있음
+ *   HELD       선택 중    누군가 선점(마감 전) · 결제 승인 중(PAYING) — 회색 · 못 고름 (마감 뒤 다시 풀릴 수 있음)
+ *   SOLD       판매       결제 완료
  * </pre>
  */
 @Service
@@ -36,29 +33,21 @@ public class SeatService {
 
     private final ConcertRepository concertRepository;
     private final SeatRepository seatRepository;
-    private final BookingRepository bookingRepository;
     private final SeatCache seatCache;
-    private final ConcertProperties.Booking props;
-    private final Clock clock;
 
-    public SeatService(ConcertRepository concertRepository, SeatRepository seatRepository, BookingRepository bookingRepository,
-                       SeatCache seatCache, ConcertProperties props, Clock clock) {
+    public SeatService(ConcertRepository concertRepository, SeatRepository seatRepository, SeatCache seatCache) {
         this.concertRepository = concertRepository;
         this.seatRepository = seatRepository;
-        this.bookingRepository = bookingRepository;
         this.seatCache = seatCache;
-        this.props = props.booking();
-        this.clock = clock;
     }
 
-    /** N7 — 좌석 배치 · 상태 (캐시 2초). 누가 · 몇 명이 골랐는지는 내보내지 않습니다. available = 미선택 + 경합 (아직 살 수 있는 좌석) */
+    /** N7 — 좌석 배치 · 상태 (캐시 2초). 누가 잡았는지는 내보내지 않습니다. available = 판매되지 않은 좌석 (선택 중은 풀릴 수 있어 포함) */
     public SeatMap seats(long concertId) {
         return seatCache.get(concertId).orElseGet(() -> {
             concertRepository.findById(concertId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
-            OffsetDateTime selectedAfter = OffsetDateTime.now(clock).minusMinutes(props.selectMinutes());
-            Set<Long> contested = new HashSet<>(bookingRepository.findPendingSeatIds(concertId, selectedAfter));
+            OffsetDateTime now = Instant.ofEpochMilli(seatRepository.nowMillis()).atOffset(ZoneOffset.UTC);   // DB 시계
             List<SeatView> seats = seatRepository.findByConcertIdOrderById(concertId).stream()
-                    .map(s -> new SeatView(s.getId(), s.getSection(), s.getRowNo(), s.getSeatNo(), s.getPrice(), status(s, contested)))
+                    .map(s -> new SeatView(s.getId(), s.getSection(), s.getRowNo(), s.getSeatNo(), s.getPrice(), status(s, now)))
                     .toList();
             long available = seats.stream().filter(s -> !SeatEntity.Status.SOLD.name().equals(s.status())).count();
             SeatMap map = new SeatMap(concertId, seats.size(), available, seats);
@@ -82,8 +71,12 @@ public class SeatService {
         return created;
     }
 
-    private static String status(SeatEntity s, Set<Long> contested) {
-        if (s.getStatus() == SeatEntity.Status.SOLD) return "SOLD";
-        return s.getStatus() == SeatEntity.Status.HELD || contested.contains(s.getId()) ? "CONTESTED" : "AVAILABLE";
+    private static String status(SeatEntity s, OffsetDateTime now) {
+        return switch (s.getStatus()) {
+            case SOLD -> "SOLD";
+            case PAYING -> "HELD";
+            case HELD -> s.getHoldExpiresAt() != null && s.getHoldExpiresAt().isAfter(now) ? "HELD" : "AVAILABLE";
+            case AVAILABLE -> "AVAILABLE";
+        };
     }
 }
