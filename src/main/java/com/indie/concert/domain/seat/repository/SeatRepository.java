@@ -2,7 +2,6 @@ package com.indie.concert.domain.seat.repository;
 
 import com.indie.concert.domain.seat.entity.SeatEntity;
 
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -17,19 +16,25 @@ public interface SeatRepository {
     List<SeatEntity> findByConcertIdOrderById(Long concertId);
 
     /**
-     * ★ 결제 승인 직전 좌석 확보 — 빈 좌석이고 예매가 아직 PENDING 일 때만. 1 = 이 예매가 승인 진행 · 0 = 먼저 결제한(또는 승인 중인) 사람이 있음.
-     * 승인 중 좌석(HELD)은 시간이 지나도 여기서 가져가지 못합니다 — 결제 결과를 확인한 만료 처리기만 풉니다
+     * ★ N10 선점 — 빈 좌석이거나 마감이 지난 선점(HELD)일 때만. 마감은 예매의 hold_expires_at 을 그대로 씁니다.
+     * 1 = 내가 잡음 · 0 = 살아 있는 선점 · 결제 중(PAYING) · 판매(SOLD). 동시에 와도 행 잠금 뒤 조건을 다시 봐서 한 명만 1 (11/04 77A)
      */
-    int claim(long seatId, long bookingId, long userId, OffsetDateTime until);
+    int hold(long seatId, long concertId, long bookingId, long userId);
 
-    /** 승인 전 거부(금액 위조 · 결제 만료 등) — 돈이 나가지 않았으니 좌석을 다시 경합으로 */
-    int unclaim(long bookingId);
+    /** ★ N16 결제 시작 — 내 선점이고 서버 마감(DB now()) 전일 때만 HELD → PAYING. 0 = 마감 지남 · 남이 가져감 · 이미 결제 중 */
+    int startPaying(long bookingId, long userId);
 
-    /** 결제 승인 → SOLD */
+    /** 승인 전 거부 · 거절 — 돈이 나가지 않았으니 PAYING → HELD (마감은 그대로 — 이미 지났으면 다음 사람이 바로 가져갈 수 있음) */
+    int stopPaying(long bookingId);
+
+    /** 결제 승인 → SOLD (PAYING 일 때만) */
     int sell(long bookingId);
 
-    /** 예매 취소 · 만료 · 결제 실패 → AVAILABLE (HELD · SOLD 모두) */
+    /** 예매 취소 · 만료 → AVAILABLE (이 예매가 잡은 좌석만 — 다음 사람에게 넘어간 좌석은 그대로) */
     int releaseBooking(long bookingId);
+
+    /** DB 시계 (epoch ms) — 선점 시간 비교는 전부 DB now() 기준입니다. 앱 서버 시계는 쓰지 않습니다 (77A) */
+    long nowMillis();
 
     /** 구역 하나를 rows × seatsPerRow 로 생성. 이미 있는 자리는 건너뜁니다 — 반환은 새로 만든 수 */
     int createGrid(long concertId, String section, int rows, int seatsPerRow, int price);

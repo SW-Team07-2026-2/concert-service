@@ -30,8 +30,8 @@ public interface ConcertRepository {
     /** N15 — 공연장의 예정 공연 (같은 스키마라 JOIN 으로 끝납니다) */
     List<ConcertEntity> findByVenueIdAndStartsAtGreaterThanEqualOrderByStartsAtAsc(Long venueId, OffsetDateTime now, Limit limit);
 
-    /** 검표 — 입장이 열린 공연 (시작 시각 [from, to]) */
-    List<ConcertEntity> findByStartsAtBetweenOrderByStartsAtAsc(OffsetDateTime from, OffsetDateTime to);
+    /** 검표 — 입장이 열린 공연: 시작이 opensBy 이전이고, 끝 시각이 now 이후 (끝 시각이 없으면 시작이 startedAfter 이후) */
+    List<ConcertEntity> findEntryOpen(OffsetDateTime now, OffsetDateTime opensBy, OffsetDateTime startedAfter);
 
     /** 대기열 입장 · 스냅샷 대상 — 대기열을 켠 판매 중 공연 */
     List<ConcertEntity> findQueueActive(OffsetDateTime now);

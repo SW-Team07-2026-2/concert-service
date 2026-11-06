@@ -73,7 +73,20 @@ class InternalTokenFilterTest {
 
     @Test
     void expiredBeyondSkewIs401() throws Exception {
-        assertThat(call(token(SECRET, "studio", "concert", -60)).getStatus()).isEqualTo(401);
+        MockHttpServletResponse response = call(token(SECRET, "studio", "concert", -60));
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(response.getContentAsString()).contains("INTERNAL_TOKEN_EXPIRED");
+    }
+
+    /** 만료 시각이 없으면 만료가 아니라 잘못된 토큰 */
+    @Test
+    void tokenWithoutExpIsInvalid() throws Exception {
+        SignedJWT jwt = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256),
+                new JWTClaimsSet.Builder().issuer("studio").audience("concert").build());
+        jwt.sign(new MACSigner(SECRET.getBytes(StandardCharsets.UTF_8)));
+        MockHttpServletResponse response = call(jwt.serialize());
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(response.getContentAsString()).contains("INTERNAL_TOKEN_INVALID");
     }
 
     private static String token(String secret, String iss, String aud, long expInSeconds) throws Exception {
@@ -105,6 +118,16 @@ class InternalTokenFilterTest {
     }
 
     /** 수집 토큰으로 수집 API 가 아닌 내부 경로는 못 부름 */
+    /** 1 MiB 를 넘는 본문은 해시 불일치가 아니라 413 */
+    @Test
+    void gatewayIngestBodyOver1MiBIs413() throws Exception {
+        String big = "{\"items\":[\"" + "a".repeat(1024 * 1024) + "\"]}";
+        MockHttpServletResponse response = ingestCall("/internal/concerts", ingestToken("ingest:crawler-2026-11", sha256(big)),
+                big, new MockFilterChain());
+        assertThat(response.getStatus()).isEqualTo(413);
+        assertThat(response.getContentAsString()).contains("PAYLOAD_TOO_LARGE");
+    }
+
     @Test
     void gatewayIngestTokenOnOtherInternalPathIs401() throws Exception {
         assertThat(ingestCall("/internal/queue/rebuild", ingestToken("ingest:crawler-2026-11", sha256(BODY)), BODY, new MockFilterChain())

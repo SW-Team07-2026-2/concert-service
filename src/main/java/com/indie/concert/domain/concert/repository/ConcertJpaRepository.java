@@ -43,6 +43,12 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
             OffsetDateTime from, OffsetDateTime to, Collection<Long> artistIds);
 
     @Override
+    @Query("select c from ConcertEntity c where c.startsAt <= :opensBy "
+            + "and (c.endsAt >= :now or (c.endsAt is null and c.startsAt >= :startedAfter)) order by c.startsAt asc")
+    List<ConcertEntity> findEntryOpen(@Param("now") OffsetDateTime now, @Param("opensBy") OffsetDateTime opensBy,
+                                      @Param("startedAfter") OffsetDateTime startedAfter);
+
+    @Override
     @Query("select c from ConcertEntity c where c.queueEnabled = true and c.bookingOpenAt <= :now and c.startsAt > :now")
     List<ConcertEntity> findQueueActive(@Param("now") OffsetDateTime now);
 

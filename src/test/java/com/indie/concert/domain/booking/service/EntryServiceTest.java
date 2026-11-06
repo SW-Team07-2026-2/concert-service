@@ -31,7 +31,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 입장 QR 은 결제된 내 예매 · 공연 3시간 전 ~ 시작 6시간 뒤에만, 검표는 같은 공연 · 한 번만 */
+/** 입장 QR 은 결제된 내 예매 · 공연 3시간 전 ~ 끝 시각(모르면 시작 6시간 뒤)에만, 검표는 같은 공연 · 한 번만 */
 class EntryServiceTest {
 
     private static final Instant NOW = Instant.parse("2026-11-01T10:00:00Z");
@@ -69,6 +69,16 @@ class EntryServiceTest {
         paid(NOW_AT.minusHours(6).minusMinutes(1));
 
         assertCode(() -> service.issue(3L, 30L), "ENTRY_CLOSED");
+    }
+
+    /** 끝 시각을 알면 그 시각에 마감 — 2시간 공연은 끝나면 닫히고, 종일 페스티벌은 6시간이 지나도 열려 있습니다 */
+    @Test
+    void closesAtEndsAtWhenKnown() {
+        paid(NOW_AT.minusHours(2), NOW_AT.minusMinutes(1));
+        assertCode(() -> service.issue(3L, 30L), "ENTRY_CLOSED");
+
+        paid(NOW_AT.minusHours(7), NOW_AT.plusHours(1));
+        assertThat(service.issue(3L, 30L).token()).isNotBlank();
     }
 
     @Test
@@ -147,11 +157,16 @@ class EntryServiceTest {
     }
 
     private void paid(OffsetDateTime startsAt) {
+        paid(startsAt, null);
+    }
+
+    private void paid(OffsetDateTime startsAt, OffsetDateTime endsAt) {
         BookingEntity b = booking(BookingEntity.Status.CONFIRMED, null);
         when(bookings.findByIdAndUserId(30L, 3L)).thenReturn(Optional.of(b));
         ConcertEntity c = mock(ConcertEntity.class);
         when(c.getId()).thenReturn(42L);
         when(c.getStartsAt()).thenReturn(startsAt);
+        when(c.getEndsAt()).thenReturn(endsAt);
         when(concerts.findById(42L)).thenReturn(Optional.of(c));
     }
 

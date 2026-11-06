@@ -21,7 +21,7 @@ public interface PaymentClient {
     String cancel(long bookingId, String reason, boolean refundApproved);
 
     /**
-     * 결제 승인 — ★ 좌석을 확보(claim)한 뒤에만 부릅니다 (10/27 좌석 경합). Payment 가 prepare 금액과 대조합니다.
+     * 결제 승인 — ★ 선점 좌석을 결제 중(PAYING)으로 바꾼 뒤에만 부릅니다 (11/04 77A). Payment 가 prepare 금액과 대조합니다.
      * paymentKey 는 토스 successUrl 의 값 · forceDecline 은 사용자의 X-Force-Decline 그대로 (토스 테스트 코드). APPROVED · DECLINED 는 결과, 승인 전 거부는 Rejected.
      */
     Confirmed confirm(long bookingId, long userId, String paymentKey, int amount, String forceDecline);

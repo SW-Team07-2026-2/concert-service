@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 공개 API N7 — 좌석 배치 · 상태. 로그인 필요.
- * 점유(N8) · 점유 해제(N9)는 10/27 폐지 — 좌석은 고를 때 잡지 않고 먼저 결제 승인(N16)한 사람이 가져갑니다.
+ * 좌석 선점은 N10(예매 만들기)이 합니다 (11/04 77A) — 별도 점유(N8) · 해제(N9) API 는 없고, 해제는 N13(선택 취소)입니다.
  */
 @RestController
 public class SeatController {
