@@ -91,8 +91,8 @@ class SeatHoldFlowTest {
     }
 
     private static final ConcertProperties PROPS = new ConcertProperties(null, null, null, "Asia/Seoul",
-            new ConcertProperties.Booking(8, 60, 60, 24, 30000),
-            new ConcertProperties.Queue(20, 1000, 200, 5000, 1000, 15, 10, 2000, 3000, 5000),
+            new ConcertProperties.Booking(7, 179, 60, 24, 30000),
+            new ConcertProperties.Queue(20, 1000, 200, 5000, 1000, 15, 7, 2000, 3000, 5000),
             null, null, null, null, null);
 
     private static LettuceConnectionFactory redisFactory;
@@ -275,7 +275,7 @@ class SeatHoldFlowTest {
         assertThat(seatStatus(seatLost)).isEqualTo("AVAILABLE");
     }
 
-    /** ⑧ 입장 토큰 만료 1초 전 선점 → 성공 · 토큰이 끝나도 선점 서버 마감(9분)까지 결제 가능 (N16 은 토큰을 보지 않음) */
+    /** ⑧ 입장 토큰 만료 1초 전 선점 → 성공 · 화면 시계는 이어서 곧 끝나고, 토큰이 끝나도 유예(약 3분) 안이면 결제 가능 (N16 은 토큰을 보지 않음) */
     @Test
     void holdJustBeforeTokenExpiryCanStillPay() throws Exception {
         long concertId = concert("flow-token-edge");
@@ -284,9 +284,9 @@ class SeatHoldFlowTest {
         Thread.sleep(1_000);                                                               // 토큰이 1초 남음
 
         BookingCreated held = service.create(concertId, 51L, token, seatId);
-        assertThat(held.expiresIn()).isBetween(475L, 480L);
+        assertThat(held.expiresIn()).isBetween(0L, 2L);
         assertThat(jdbc.queryForObject("SELECT EXTRACT(EPOCH FROM hold_expires_at - now()) FROM booking WHERE id = ?",
-                Double.class, held.bookingId())).isBetween(530.0, 540.0);
+                Double.class, held.bookingId())).isBetween(175.0, 181.0);
         awaitTokenGone(concertId, 51L);
 
         assertThat(service.pay(51L, held.bookingId(), "pk-51", 55000, null).status()).isEqualTo("CONFIRMED");

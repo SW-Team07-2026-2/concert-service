@@ -15,7 +15,7 @@ import java.time.OffsetDateTime;
  * <pre>
  * PENDING(= 선점) ──결제 승인──▶ CONFIRMED ──취소──▶ CANCELLED
  *    ├── 선택 취소 ──▶ CANCELLED
- *    └── 선점 마감(서버 9분) 뒤 정리 ▶ EXPIRED     (08 §8.6 — ERD 에 없던 상태)
+ *    └── 선점 서버 마감 뒤 정리 ▶ EXPIRED     (08 §8.6 — ERD 에 없던 상태)
  * </pre>
  * 11/04 77A — 예매 PENDING 이 곧 선점(holdId = bookingId)입니다. 결제가 거절돼도 PENDING 그대로 (새 결제로 다시 · 80B).
  * 입장(검표)은 상태가 아니라 checked_in_at 으로 남깁니다 — CONFIRMED 그대로, 한 번만 기록 (11/01).
@@ -43,7 +43,7 @@ public class BookingEntity {
 
     private OffsetDateTime createdAt;
 
-    /** 선점 서버 마감 — N10 때 DB now() + 9분 (화면 마감은 60초 앞) */
+    /** 선점 서버 마감 — N10 때 DB now() + 입장 토큰 남은 초 + 유예 179초 (화면 마감은 179초 앞) */
     private OffsetDateTime holdExpiresAt;
 
     /** 결제 승인 시작 (좌석 PAYING) — 응답을 못 받으면 1분 뒤 정리 */

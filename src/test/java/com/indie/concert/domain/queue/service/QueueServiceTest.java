@@ -81,7 +81,7 @@ class QueueServiceTest {
         assertEntryRejected(concert, 6L, null, "ENTRY_TOKEN_REQUIRED");
         assertEntryRejected(concert, 5L, "tok-5", "QUEUE_NOT_ADMITTED");
         assertEntryRejected(concert, 6L, "nope", "ENTRY_TOKEN_INVALID");
-        service.requireEntry(concert, 6L, " tok-6 ");
+        assertThat(service.requireEntry(concert, 6L, " tok-6 ")).hasValue(300);
     }
 
     private void assertEntryRejected(ConcertEntity concert, long userId, String token, String code) {

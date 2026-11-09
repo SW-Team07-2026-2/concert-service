@@ -28,6 +28,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -57,10 +58,11 @@ class BookingServiceTest {
     private final SeatRepository seats = mock(SeatRepository.class);
     private final ConcertRepository concerts = mock(ConcertRepository.class);
     private final PaymentClient payment = mock(PaymentClient.class);
+    private final QueueService queue = mock(QueueService.class);
     private final BookingService service = new BookingService(bookings, bookingSeats, seats, concerts,
-            mock(VenueRepository.class), mock(QueueService.class), payment, mock(BookingEvents.class),
+            mock(VenueRepository.class), queue, payment, mock(BookingEvents.class),
             new TransactionTemplate(mock(PlatformTransactionManager.class)),
-            new ConcertProperties(null, null, null, "Asia/Seoul", new ConcertProperties.Booking(8, 60, 60, 24, 30000),
+            new ConcertProperties(null, null, null, "Asia/Seoul", new ConcertProperties.Booking(7, 179, 60, 24, 30000),
                     null, null, null, null, null, null),
             Clock.fixed(NOW, ZoneOffset.UTC));
 
@@ -313,7 +315,7 @@ class BookingServiceTest {
         verify(seats, never()).releaseBooking(anyLong());
     }
 
-    /** 응답의 expiresIn(남은 초 · DB 시계)으로 프론트가 타이머를 돌립니다 — 화면 8분 · 서버 9분 */
+    /** 응답의 expiresIn(남은 초 · DB 시계)으로 프론트가 타이머를 돌립니다 — 대기열을 끈 공연은 화면 7분 · 서버 599초 */
     @Test
     void newHoldReturnsTimerInSeconds() {
         selectable(77L);
@@ -322,17 +324,43 @@ class BookingServiceTest {
 
         BookingCreated created = service.create(1L, 3L, "token", 77L);
 
-        verify(bookings).startHold(9L, 540);
-        assertThat(created.expiresAt()).isEqualTo(NOW_AT.plusMinutes(8));
-        assertThat(created.expiresIn()).isEqualTo(480);
+        verify(bookings).startHold(9L, 599);
+        assertThat(created.expiresAt()).isEqualTo(NOW_AT.plusMinutes(7));
+        assertThat(created.expiresIn()).isEqualTo(420);
         assertThat(created.pgOrderId()).isEqualTo("TICKET-9");
+    }
+
+    /** 좌석을 고를 때 입장 토큰에 남은 시간을 이어받습니다 — 시계가 다시 시작되지 않음 */
+    @Test
+    void holdContinuesEntryTokenClock() {
+        when(queue.requireEntry(any(), anyLong(), any())).thenReturn(OptionalLong.of(300));
+        selectable(77L);
+        newHold(9L);
+        when(payment.prepare(9L, 3L, 55000)).thenReturn(new PaymentClient.Prepared("TICKET-9", "PENDING", null));
+
+        service.create(1L, 3L, "token", 77L);
+
+        verify(bookings).startHold(9L, 479);
+    }
+
+    /** 토큰이 화면 시간보다 길어도 (배포 전에 받은 10분 토큰) 서버 마감은 토스 10분을 넘지 않음 */
+    @Test
+    void holdNeverExceedsScreenTime() {
+        when(queue.requireEntry(any(), anyLong(), any())).thenReturn(OptionalLong.of(600));
+        selectable(77L);
+        newHold(9L);
+        when(payment.prepare(9L, 3L, 55000)).thenReturn(new PaymentClient.Prepared("TICKET-9", "PENDING", null));
+
+        service.create(1L, 3L, "token", 77L);
+
+        verify(bookings).startHold(9L, 599);
     }
 
     /** 같은 좌석을 다시 골라도 타이머는 그대로 — 새로고침 · 더블클릭으로 늘릴 수 없음 */
     @Test
     void sameSeatKeepsTimer() {
         selectable(77L);
-        BookingEntity running = pending(8L, NOW_AT.plusMinutes(6));   // 서버 마감까지 6분 = 화면 5분
+        BookingEntity running = pending(8L, NOW_AT.plusSeconds(479));   // 서버 마감까지 479초 = 화면 5분
         when(running.getPgOrderId()).thenReturn("TICKET-8");
         when(bookings.findActive(1L, 3L)).thenReturn(Optional.of(running));
         when(bookingSeats.findByBookingId(8L)).thenReturn(List.of(new BookingSeatEntity(8L, 77L)));
@@ -393,9 +421,9 @@ class BookingServiceTest {
         when(seats.findById(seatId)).thenReturn(Optional.of(seat));
     }
 
-    /** 새 선점 — 저장 · 선점 성공 · 다시 읽으면 서버 마감 = 지금 + 9분 */
+    /** 새 선점 — 저장 · 선점 성공 · 다시 읽으면 서버 마감 = 지금 + 599초 */
     private void newHold(long bookingId) {
-        BookingEntity saved = pending(bookingId, NOW_AT.plusMinutes(9));
+        BookingEntity saved = pending(bookingId, NOW_AT.plusSeconds(599));
         when(bookings.save(any())).thenReturn(saved);
         when(bookings.findById(bookingId)).thenReturn(Optional.of(saved));
         when(seats.hold(77L, 1L, bookingId, 3L)).thenReturn(1);

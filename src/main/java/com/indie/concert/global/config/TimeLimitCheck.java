@@ -23,6 +23,9 @@ public class TimeLimitCheck {
         require(holdSeconds < TOSS_APPROVE_SECONDS,
                 "선점 서버 마감(hold-minutes×60 + hold-grace-seconds = %d초)은 토스 승인 시한 %d초보다 짧아야 합니다",
                 holdSeconds, TOSS_APPROVE_SECONDS);
+        require(queue.entryTtlMinutes() <= booking.holdMinutes(),
+                "입장 토큰(entry-ttl-minutes = %d)은 화면 시계(hold-minutes = %d)보다 길 수 없습니다 — 입장부터 결제하기까지 시계가 하나입니다",
+                queue.entryTtlMinutes(), booking.holdMinutes());
         require(props.entry().openBeforeHours() < booking.cancelDeadlineHours(),
                 "입장 QR 발급(open-before-hours = %d)은 취소 마감(cancel-deadline-hours = %d)보다 늦어야 합니다 — 입장 뒤 환불 방지",
                 props.entry().openBeforeHours(), booking.cancelDeadlineHours());
