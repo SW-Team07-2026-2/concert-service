@@ -32,7 +32,7 @@ import java.util.stream.Collectors;
  * queue:ready:{id}          센티넬 — 없으면 재구성                   〃
  * queue:snapshot:{id}       DB 에 반영한 마지막 seq                  〃
  * queue:alive:{id}:{uid}    생존 신호                               15초
- * entry:{id}:{uid}          입장 토큰 (DB 에도 · 복구 때 남은 시간만큼) 10분
+ * entry:{id}:{uid}          입장 토큰 (DB 에도 · 복구 때 남은 시간만큼) 7분
  * queue:admitter:{id}       입장 처리기 리더                         5초 (리더가 연장)
  * queue:snapshotter:{id}    스냅샷 차례                              4초
  * queue:rebuild:{id}        재구성 락                                60초

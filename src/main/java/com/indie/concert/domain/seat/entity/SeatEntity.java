@@ -14,7 +14,7 @@ import java.time.OffsetDateTime;
 /**
  * seat — 상태 전이는 SeatRepository 의 조건부 UPDATE 로만 합니다 (FR-CON-27 — 좌석 중복의 최종 보장).
  * <pre>
- * AVAILABLE ──좌석 선택(N10) · 한 명──▶ HELD(선점 · 서버 9분) ──결제 승인 요청(N16)──▶ PAYING(승인 중) ──승인──▶ SOLD
+ * AVAILABLE ──좌석 선택(N10) · 한 명──▶ HELD(선점) ──결제 승인 요청(N16)──▶ PAYING(승인 중) ──승인──▶ SOLD
  *     ▲                                  │   ▲                                    │                     │
  *     │                                  │   └──── 거절 · 승인 전 거부 (마감 그대로) ──┘                     │
  *     └── 선택 취소 · 마감 뒤 정리 ─────────┘                                                              │
