@@ -11,7 +11,7 @@ public enum QueueErrorCode implements BaseErrorCode {
     QUEUE_DISABLED(HttpStatus.CONFLICT, "대기열 없이 예매하는 공연입니다"),
     QUEUE_CLOSED(HttpStatus.GONE, "판매가 끝난 공연입니다"),
     ENTRY_TOKEN_REQUIRED(HttpStatus.FORBIDDEN, "대기열 입장 후 이용할 수 있습니다"),
-    QUEUE_NOT_ADMITTED(HttpStatus.FORBIDDEN, "입장 시간(10분)이 지났거나 아직 입장 전입니다. 대기열에 다시 들어가주세요"),
+    QUEUE_NOT_ADMITTED(HttpStatus.FORBIDDEN, "입장 시간(7분)이 지났거나 아직 입장 전입니다. 대기열에 다시 들어가주세요"),
     ENTRY_TOKEN_INVALID(HttpStatus.FORBIDDEN, "입장 토큰이 올바르지 않습니다. 새로고침 후 다시 시도해주세요"),
     NOT_IN_QUEUE(HttpStatus.NOT_FOUND, "대기열에 없습니다"),
     QUEUE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "대기열을 잠시 사용할 수 없습니다. 잠시 후 다시 시도해주세요");

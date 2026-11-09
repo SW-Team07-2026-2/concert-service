@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit;
  * 대기열 (N4 ~ N6 · i1 · i2 · 16_대기열_Redis_운영). 원칙 — "Redis 를 안 죽게"보다 "죽어도 복구되게".
  * <pre>
  * 진입 · 조회   Redis 만             응답 경로에 DB 없음
- * 입장 처리     1초 · 리더 하나        ZPOPMIN N → 입장 토큰 10분 → DB 즉시 반영
+ * 입장 처리     1초 · 리더 하나        ZPOPMIN N → 입장 토큰 7분 → DB 즉시 반영
  * 스냅샷        5초 · 증분 배치        Redis → queue_entry
  * 복구          센티넬이 없으면        queue_entry → ZADD (순서 그대로) + 입장 토큰 (남은 시간만큼) · 다른 replica 가 복구 중이면 DB COUNT 로 degraded
  * </pre>
@@ -133,15 +133,16 @@ public class QueueService {
     /**
      * 좌석 선점(N10) 앞단 (FR-CON-21) — 대기열을 켠 공연은 입장 토큰이 맞아야 합니다.
      * 끈 공연은 같은 판매 시각만 검사합니다 (FR-CON-28). 🔴 Redis 를 못 읽으면 통과시키지 않습니다 — 대기열 우회가 됩니다.
+     * @return 입장 토큰 남은 초 — 선점 마감이 이어받습니다 (입장부터 결제하기까지 시계 하나). 대기열을 끈 공연은 토큰이 없어 empty
      */
-    public void requireEntry(ConcertEntity concert, long userId, String entryToken) {
+    public OptionalLong requireEntry(ConcertEntity concert, long userId, String entryToken) {
         ConcertEntity.SaleStatus sale = concert.saleStatus(now());
         if (sale == ConcertEntity.SaleStatus.CLOSED) throw closed();
         if (!concert.isQueueEnabled()) {
             if (sale == ConcertEntity.SaleStatus.SCHEDULED) {
                 throw new GeneralException(QueueErrorCode.QUEUE_NOT_OPEN);
             }
-            return;
+            return OptionalLong.empty();
         }
         if (entryToken == null || entryToken.isBlank()) throw entryRequired();
         Optional<QueueStore.Entry> entry;
@@ -155,6 +156,7 @@ public class QueueService {
                 entryToken.strip().getBytes(StandardCharsets.UTF_8))) {
             throw new GeneralException(QueueErrorCode.ENTRY_TOKEN_INVALID);
         }
+        return OptionalLong.of(entry.get().ttlSeconds());
     }
 
     /** 입장 처리 (1초) — 리더만. 센티넬이 없으면 여기서도 복구합니다 (아무도 폴링하지 않아도 복구되게) */
@@ -228,7 +230,7 @@ public class QueueService {
     /**
      * DB → Redis (16 §2). true = 이제 준비됨 · false = 다른 replica 가 재구성 중.
      * seq 도 DB 의 최댓값 이상으로 되돌립니다 — 안 하면 복구 직후 진입자가 기존 대기자보다 앞 번호를 받습니다.
-     * 입장 토큰도 되살립니다 (10/24) — 안 하면 좌석을 고르던 사람(최대 초당 입장 수 × 10분)이 전부 다시 줄을 섭니다.
+     * 입장 토큰도 되살립니다 (10/24) — 안 하면 좌석을 고르던 사람(최대 초당 입장 수 × 7분)이 전부 다시 줄을 섭니다.
      */
     private boolean rebuild(ConcertEntity concert, boolean force) {
         long concertId = concert.getId();
@@ -256,7 +258,7 @@ public class QueueService {
         }
     }
 
-    /** 입장 토큰 — 남은 시간만큼만. 건수는 초당 입장 수 × 10분으로 묶여 있어(기본 1.2만) 한 번에 읽습니다 */
+    /** 입장 토큰 — 남은 시간만큼만. 건수는 초당 입장 수 × 7분으로 묶여 있어(기본 8,400) 한 번에 읽습니다 */
     private int restoreEntryTokens(long concertId) {
         Duration ttl = Duration.ofMinutes(props.entryTtlMinutes());
         Instant now = clock.instant();

@@ -87,8 +87,8 @@ app:
     read-timeout-ms: 3000                     # 11 §4 — 동기 호출 타임아웃 3초
   zone: Asia/Seoul                            # 캘린더 · 날짜 필터의 하루 경계
   booking:
-    hold-minutes: 8                           # 11/04 77A 선점 — 좌석을 고르면(N10) 8분 안에 결제 = 화면 타이머 (티켓링크 '예매 가능 시간')
-    hold-grace-seconds: 60                    # 서버 마감 = 화면 + 60초 (9분) — 토스 결제창 안에서는 타이머가 안 보여서. 토스 '인증 뒤 10분 안 승인' 안쪽
+    hold-minutes: 7                           # 11/09 화면 시계 = 대기열 통과부터 결제하기까지 7분 하나 · 좌석을 고르면(N10) 입장 토큰 남은 시간을 이어받음
+    hold-grace-seconds: 179                   # 서버 마감 = 화면 + 약 3분 (입장 후 최대 599초) — 결제하기를 누른 사람의 토스 결제창 시간 보장. 180 이면 토스 '인증 뒤 10분 안 승인' 기동 검사에 걸림
     paying-check-seconds: 60                  # 81A — 결제 승인 응답을 못 받은 PAYING 은 1분 뒤 정리가 Payment 에 결과를 물음 (Payment↔토스 최악 ≈ 26초)
     cancel-deadline-hours: 24                 # FR-CON-14 — 공연 24시간 전까지 취소
     expiry-interval-ms: 30000                 # 선점 만료 · 결제 응답 없음 정리 30초
@@ -103,7 +103,7 @@ app:
     snapshot-interval-ms: 5000                # 16 §1 — 5초 증분 배치 INSERT
     snapshot-batch: 1000
     alive-ttl-seconds: 15                     # FR-CON-24 — 15초 폴링이 없으면 이탈
-    entry-ttl-minutes: 10                     # FR-CON-20 — 입장 토큰 10분
+    entry-ttl-minutes: 7                      # FR-CON-20 — 입장 토큰 7분 = 화면 시계 (hold-minutes 이하)
     poll-after-ms: 2000
     degraded-poll-after-ms: 3000
     leader-ttl-ms: 5000                       # 08 §8.2 — 입장 처리기 리더 락 TTL 5초

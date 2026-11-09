@@ -42,6 +42,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -49,7 +50,7 @@ import java.util.stream.Collectors;
  * 예매 — Saga ① (11 §4 · 15 §5.1 의 준비 → 승인 흐름). Concert 가 흐름을 지휘하고 보상(좌석 반환)까지 책임집니다.
  * <pre>
  * 좌석 선점 (11/04 77A · 티켓링크 방식) — 예매 PENDING = 선점 (holdId = bookingId)
- * ① 좌석 고름(N10) → 조건부 UPDATE 로 한 명만 선점 (화면 8분 · 서버 9분 · DB now()) + Payment prepare   진 사람은 바로 409 SEAT_TAKEN
+ * ① 좌석 고름(N10) → 조건부 UPDATE 로 한 명만 선점 (화면 = 입장 토큰 남은 시간 · 서버 = 화면 + 유예 · DB now()) + Payment prepare   진 사람은 바로 409 SEAT_TAKEN
  * ② 결제 승인(N16) → 내 선점이고 서버 마감 전일 때만 HELD → PAYING (아니면 410 · 토스를 부르지 않음) → Payment 내부 승인
  *    APPROVED: CONFIRMED · SOLD   거절: PAYING → HELD · 새 결제(새 pgOrderId)로 다시 (80B)   응답 없음: PAYING 그대로 503
  * ③ 정리(30초) — 마감이 지난 선점 · 1분 넘게 응답 없는 PAYING → Payment 에 먼저 묻고 → 승인이면 확정, 아니면 EXPIRED · 좌석 반환
@@ -93,13 +94,13 @@ public class BookingService {
     }
 
     /**
-     * N10 — 좌석 선점 = 예매 PENDING + 결제 준비. 🔴 금액은 seat.price 로만 정합니다 (요청에 금액 없음). 입장 토큰은 여기서만 봅니다.
+     * N10 — 좌석 선점 = 예매 PENDING + 결제 준비. 🔴 금액은 seat.price 로만 정합니다 (요청에 금액 없음). 입장 토큰은 여기서만 봅니다 — 선점 마감이 토큰 남은 시간을 이어받아 입장부터 결제하기까지 시계가 하나입니다.
      * 같은 좌석으로 다시 부르면 진행 중인 선점을 그대로 (더블클릭 · 탭 2개 · 타이머 리셋 없음).
      * 다른 좌석이면 409 HOLD_EXISTS + 내 bookingId — 「이전단계」는 N13 으로 선택을 취소한 뒤 다시 고릅니다.
      */
     public BookingCreated create(long concertId, long userId, String entryToken, long seatId) {
         ConcertEntity concert = concertRepository.findById(concertId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
-        queueService.requireEntry(concert, userId, entryToken);
+        OptionalLong entryLeft = queueService.requireEntry(concert, userId, entryToken);
         SeatEntity seat = seatRepository.findById(seatId).filter(s -> s.getConcertId().equals(concertId))
                 .orElseThrow(() -> new GeneralException(SeatErrorCode.SEAT_NOT_FOUND));
         Optional<BookingEntity> mine = bookingRepository.findActive(concertId, userId);
@@ -111,7 +112,7 @@ public class BookingService {
         try {
             booking = tx.execute(s -> {
                 BookingEntity b = bookingRepository.save(new BookingEntity(userId, concertId, seat.getPrice(), OffsetDateTime.now(clock)));
-                bookingRepository.startHold(b.getId(), holdSeconds());
+                bookingRepository.startHold(b.getId(), holdSeconds(entryLeft));
                 bookingSeatRepository.save(new BookingSeatEntity(b.getId(), seatId));
                 if (seatRepository.hold(seatId, concertId, b.getId(), userId) == 0) {
                     throw new GeneralException(SeatErrorCode.SEAT_TAKEN);   // 롤백 — 예매도 남지 않음
@@ -356,7 +357,7 @@ public class BookingService {
         return new BookingCreated(b.getId(), b.getTotalPrice(), pgOrderId, "PENDING", expiresAt(b), expiresIn(b));
     }
 
-    /** 화면 마감 = 서버 마감 − 유예 60초 — 프론트 타이머가 0 이 되는 시각 */
+    /** 화면 마감 = 서버 마감 − 유예 — 프론트 타이머가 0 이 되는 시각 */
     private OffsetDateTime expiresAt(BookingEntity b) {
         return b.getHoldExpiresAt().minusSeconds(props.holdGraceSeconds());
     }
@@ -371,8 +372,10 @@ public class BookingService {
         return b.getHoldExpiresAt() != null && b.getHoldExpiresAt().isAfter(dbNow());
     }
 
-    private long holdSeconds() {
-        return props.holdMinutes() * 60 + props.holdGraceSeconds();
+    /** 지금부터 서버 마감까지 초 = 화면 시계(입장 토큰 남은 초 · 최대 hold-minutes) + 유예. 대기열을 끈 공연은 hold-minutes 전체 */
+    private long holdSeconds(OptionalLong entryLeft) {
+        long screen = props.holdMinutes() * 60;
+        return Math.min(screen, entryLeft.orElse(screen)) + props.holdGraceSeconds();
     }
 
     private OffsetDateTime dbNow() {
