@@ -51,12 +51,13 @@ import java.util.stream.Collectors;
  * <pre>
  * 좌석 선점 (11/04 77A · 티켓링크 방식) — 예매 PENDING = 선점 (holdId = bookingId)
  * ① 좌석 고름(N10) → 조건부 UPDATE 로 한 명만 선점 (화면 = 입장 토큰 남은 시간 · 서버 = 화면 + 유예 · DB now()) + Payment prepare   진 사람은 바로 409 SEAT_TAKEN
- * ② 결제 승인(N16) → 내 선점이고 서버 마감 전일 때만 HELD → PAYING (아니면 410 · 토스를 부르지 않음) → Payment 내부 승인
+ * ② 결제 승인(N16) → 내 선점이고 서버 마감 전일 때만 HELD → PAYING (아니면 410 · 연타면 409 · 토스를 부르지 않음) → Payment 내부 승인
  *    APPROVED: CONFIRMED · SOLD   거절: PAYING → HELD · 새 결제(새 pgOrderId)로 다시 (80B)   응답 없음: PAYING 그대로 503
  * ③ 정리(30초) — 마감이 지난 선점 · 1분 넘게 응답 없는 PAYING → Payment 에 먼저 묻고 → 승인이면 확정, 아니면 EXPIRED · 좌석 반환
  * </pre>
  * 마감이 지난 선점은 정리를 기다리지 않고 다음 사람이 바로 가져갑니다 — 그 예매의 승인은 ②에서 막히므로 돈이 나가지 않습니다.
  * 같은 사용자의 동시 요청은 uq_booking_active 가 줄을 세웁니다 (사용자 락 없음 — 11/04 L2 해소).
+ * 예매 · 좌석을 함께 바꾸는 트랜잭션은 모두 booking → seat 순서로 잠급니다 (교착 방지 — 11/10).
  * 🔴 좌석을 푸는 모든 경로는 Payment 를 먼저 끝냅니다 — 순서가 반대면 "좌석은 다른 사람에게 팔렸는데 결제는 승인됨"이 생깁니다.
  */
 @Service
@@ -132,18 +133,19 @@ public class BookingService {
      * 그 뒤에만 Payment 승인을 부릅니다 — 마감이 지났으면 410 HOLD_EXPIRED 이고 토스는 호출하지 않습니다 (돈 안 나감).
      */
     public BookingPaid pay(long userId, long bookingId, String paymentKey, int amount, String forceDecline) {
-        BookingEntity b = bookingRepository.findByIdAndUserId(bookingId, userId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
-        if (b.getStatus() == BookingEntity.Status.CONFIRMED) throw new GeneralException(BookingErrorCode.ALREADY_PAID);
-        if (b.getStatus() == BookingEntity.Status.CANCELLED) throw new GeneralException(BookingErrorCode.BOOKING_CANCELLED);
-        if (b.getStatus() == BookingEntity.Status.EXPIRED) throw new GeneralException(BookingErrorCode.HOLD_EXPIRED);
-        Integer started = tx.execute(s -> {
-            int n = seatRepository.startPaying(bookingId, userId);
-            if (n > 0) bookingRepository.markPaying(bookingId);
-            return n;
+        rejectClosed(bookingRepository.findByIdAndUserId(bookingId, userId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND)));
+        Boolean started = tx.execute(s -> {
+            // booking 먼저 잠급니다 — 확정 · 반환(booking → seat)과 같은 순서라 같은 예매에 결제와 취소가 동시에 와도 교착이 없습니다 (11/10)
+            if (bookingRepository.markPaying(bookingId) == 0) return false;
+            if (seatRepository.startPaying(bookingId, userId) > 0) return true;
+            s.setRollbackOnly();   // 마감 지남 · 남이 가져감 · 이미 결제 중 — paying_at 도 되돌림
+            return false;
         });
-        if (started == null || started == 0) {
-            boolean paying = b.getPayingAt() != null;
-            throw new GeneralException(paying ? SeatErrorCode.SEAT_LOCKED : BookingErrorCode.HOLD_EXPIRED);   // 내 승인이 진행 중(연타) · 마감 지남 · 남이 가져감
+        if (!Boolean.TRUE.equals(started)) {
+            // 트랜잭션 뒤에 다시 읽습니다 — 동시에 온 앞 요청이 결제 중으로 바꿨으면 연타(409), 아니면 마감 지남 · 남이 가져감(410)
+            BookingEntity latest = bookingRepository.findById(bookingId).orElseThrow();
+            rejectClosed(latest);
+            throw new GeneralException(latest.getPayingAt() != null ? SeatErrorCode.SEAT_LOCKED : BookingErrorCode.HOLD_EXPIRED);
         }
         PaymentClient.Confirmed result;
         try {
@@ -320,11 +322,18 @@ public class BookingService {
         return prepared.pgOrderId();
     }
 
+    /** booking → seat 순서 (확정 · 반환과 같음) */
     private void stopPaying(long bookingId) {
         tx.executeWithoutResult(s -> {
-            seatRepository.stopPaying(bookingId);
             bookingRepository.clearPaying(bookingId);
+            seatRepository.stopPaying(bookingId);
         });
+    }
+
+    private static void rejectClosed(BookingEntity b) {
+        if (b.getStatus() == BookingEntity.Status.CONFIRMED) throw new GeneralException(BookingErrorCode.ALREADY_PAID);
+        if (b.getStatus() == BookingEntity.Status.CANCELLED) throw new GeneralException(BookingErrorCode.BOOKING_CANCELLED);
+        if (b.getStatus() == BookingEntity.Status.EXPIRED) throw new GeneralException(BookingErrorCode.HOLD_EXPIRED);
     }
 
     /** 예매 닫기 + 좌석 반환 — 예매 전이가 1행일 때만 좌석을 풉니다 (확보 · 판매된 좌석만 바뀜) */
