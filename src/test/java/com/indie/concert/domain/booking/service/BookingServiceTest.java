@@ -20,6 +20,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
@@ -37,6 +39,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -59,15 +62,18 @@ class BookingServiceTest {
     private final ConcertRepository concerts = mock(ConcertRepository.class);
     private final PaymentClient payment = mock(PaymentClient.class);
     private final QueueService queue = mock(QueueService.class);
+    /** 트랜잭션마다 새 상태 — 롤백 요청(setRollbackOnly)은 commit 에 넘어온 상태로 확인합니다 */
+    private final PlatformTransactionManager txManager = mock(PlatformTransactionManager.class);
     private final BookingService service = new BookingService(bookings, bookingSeats, seats, concerts,
             mock(VenueRepository.class), queue, payment, mock(BookingEvents.class),
-            new TransactionTemplate(mock(PlatformTransactionManager.class)),
+            new TransactionTemplate(txManager),
             new ConcertProperties(null, null, null, "Asia/Seoul", new ConcertProperties.Booking(7, 179, 60, 24, 30000),
                     null, null, null, null, null, null),
             Clock.fixed(NOW, ZoneOffset.UTC));
 
     {
         when(seats.nowMillis()).thenReturn(NOW.toEpochMilli());   // DB 시계
+        when(txManager.getTransaction(any())).thenAnswer(inv -> new SimpleTransactionStatus());
     }
 
     /** 선점 마감이 지난 예매 — 결제부터 무효화하고 좌석을 풉니다 */
@@ -201,7 +207,7 @@ class BookingServiceTest {
         verify(bookings, never()).save(any());
     }
 
-    /** ★ 선점 → PAYING → 승인 → 확정 순서. 승인은 PAYING 으로 바꾼 뒤에만 */
+    /** ★ 선점 → PAYING → 승인 → 확정 순서. 승인은 PAYING 으로 바꾼 뒤에만 · 잠금은 booking → seat (확정 · 반환과 같은 순서 — 11/10) */
     @Test
     void payMovesSeatToPayingBeforeApproving() {
         payable(9L, 77L, NOW_AT.plusMinutes(5));
@@ -215,8 +221,8 @@ class BookingServiceTest {
 
         assertThat(paid.status()).isEqualTo("CONFIRMED");
         InOrder order = inOrder(seats, bookings, payment);
-        order.verify(seats).startPaying(9L, 3L);
         order.verify(bookings).markPaying(9L);
+        order.verify(seats).startPaying(9L, 3L);
         order.verify(payment).confirm(9L, 3L, "pk-9", 55000, null);
         order.verify(bookings).confirm(9L);
         order.verify(seats).sell(9L);
@@ -233,6 +239,21 @@ class BookingServiceTest {
                     assertThat(e.getErrorCode().getCode()).isEqualTo("HOLD_EXPIRED");
                     assertThat(e.getErrorCode().getStatus()).isEqualTo(HttpStatus.GONE);
                 });
+        verify(payment, never()).confirm(anyLong(), anyLong(), anyString(), anyInt(), any());
+        verify(txManager).commit(argThat(TransactionStatus::isRollbackOnly));   // 먼저 찍은 paying_at 도 되돌림
+    }
+
+    /** ★ 11/10 — 연타한 두 요청이 결제 중이 되기 전의 예매를 같이 읽었어도, 뒤 요청은 다시 읽어 409 SEAT_LOCKED (410 이 아님) */
+    @Test
+    void doublePayDecidesFromFreshRead() {
+        payable(9L, 77L, NOW_AT.plusMinutes(5));                         // 처음 읽은 예매 — 아직 결제 중 아님
+        BookingEntity after = pending(9L, NOW_AT.plusMinutes(5));
+        when(after.getPayingAt()).thenReturn(NOW_AT);                   // 앞 요청이 커밋한 뒤
+        when(bookings.findById(9L)).thenReturn(Optional.of(after));
+        when(seats.startPaying(9L, 3L)).thenReturn(0);
+
+        assertThatThrownBy(() -> service.pay(3L, 9L, "pk-9", 55000, null))
+                .extracting(e -> ((GeneralException) e).getErrorCode().getCode()).isEqualTo("SEAT_LOCKED");
         verify(payment, never()).confirm(anyLong(), anyLong(), anyString(), anyInt(), any());
     }
 
@@ -263,8 +284,8 @@ class BookingServiceTest {
         assertThat(paid.reason()).isEqualTo("REJECT_CARD_PAYMENT");
         assertThat(paid.pgOrderId()).isEqualTo("TICKET-9b");
         InOrder order = inOrder(seats, bookings, payment);
-        order.verify(seats).stopPaying(9L);
         order.verify(bookings).clearPaying(9L);
+        order.verify(seats).stopPaying(9L);
         order.verify(bookings).attachPgOrderId(9L, null);
         order.verify(payment).prepare(9L, 3L, 55000);
         order.verify(bookings).attachPgOrderId(9L, "TICKET-9b");
@@ -432,6 +453,7 @@ class BookingServiceTest {
     private BookingEntity payable(long bookingId, long seatId, OffsetDateTime holdExpiresAt) {
         BookingEntity b = pending(bookingId, holdExpiresAt);
         when(b.getConcertId()).thenReturn(1L);
+        when(bookings.markPaying(bookingId)).thenReturn(1);   // PENDING — 좌석 쪽(startPaying)이 결과를 정함
         when(bookings.findByIdAndUserId(bookingId, 3L)).thenReturn(Optional.of(b));
         when(bookings.findById(bookingId)).thenReturn(Optional.of(b));
         when(bookingSeats.findByBookingId(bookingId)).thenReturn(List.of(new BookingSeatEntity(bookingId, seatId)));
