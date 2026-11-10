@@ -235,6 +235,30 @@ class SeatHoldFlowTest {
                 });
         assertThat(payment.confirms).hasValue(0);
         assertThat(seatStatus(seatId)).isEqualTo("HELD");   // PAYING 으로 바뀌지 않음 — 다음 사람이 바로 선점 가능
+        assertThat(paying(held.bookingId())).isFalse();      // 먼저 찍은 paying_at 도 롤백 — 남으면 정리가 이 선점을 못 찾음
+    }
+
+    /** ⑥-2 같은 예매의 결제 승인을 동시에 두 번 → 승인 1번 · 뒤 요청은 409 SEAT_LOCKED (410 이 아님 — 11/10) */
+    @Test
+    void doublePayIsSeatLockedNotExpired() throws Exception {
+        long concertId = concert("flow-double");
+        long seatId = seat(concertId, "1");
+        BookingCreated held = service.create(concertId, 36L, admit(concertId, 36L, 60_000), seatId);
+        payment.onConfirm = id -> {
+            try {
+                Thread.sleep(500);                                       // 토스 승인을 기다리는 동안 두 번째 요청이 도착
+            } catch (InterruptedException e) {
+                throw new IllegalStateException(e);
+            }
+            return new PaymentClient.Confirmed("APPROVED", null);
+        };
+
+        List<String> results = together(2, List.<Callable<String>>of(
+                () -> tryPay(36L, held.bookingId()), () -> tryPay(36L, held.bookingId())));
+
+        assertThat(results).containsExactlyInAnyOrder("CONFIRMED", "SEAT_LOCKED");
+        assertThat(payment.confirms).hasValue(1);
+        assertThat(seatStatus(seatId)).isEqualTo("SOLD");
     }
 
     /** ⑦ 승인 응답 없음(타임아웃) → PAYING 유지 · 503 → 1분 뒤 정리가 Payment 결과대로 SOLD 또는 AVAILABLE */
@@ -344,6 +368,14 @@ class SeatHoldFlowTest {
         }
     }
 
+    private String tryPay(long userId, long bookingId) {
+        try {
+            return service.pay(userId, bookingId, "pk-" + userId, 55000, null).status();
+        } catch (GeneralException e) {
+            return e.getErrorCode().getCode();
+        }
+    }
+
     /** 동시에 출발 */
     private static <T> List<T> together(int threads, List<Callable<T>> calls) throws Exception {
         ExecutorService pool = Executors.newFixedThreadPool(threads);
@@ -389,6 +421,10 @@ class SeatHoldFlowTest {
 
     private Long seatBooking(long seatId) {
         return jdbc.queryForObject("SELECT booking_id FROM seat WHERE id = ?", Long.class, seatId);
+    }
+
+    private boolean paying(long bookingId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("SELECT paying_at IS NOT NULL FROM booking WHERE id = ?", Boolean.class, bookingId));
     }
 
     private String bookingStatus(long bookingId) {
