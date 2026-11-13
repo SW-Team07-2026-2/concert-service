@@ -6,6 +6,7 @@ import com.indie.concert.domain.concert.dto.response.ConcertSummary;
 import com.indie.concert.domain.concert.dto.response.VenueDetail;
 import com.indie.concert.domain.concert.dto.response.VenueView;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
+import com.indie.concert.domain.concert.entity.Genre;
 import com.indie.concert.domain.concert.entity.Region;
 import com.indie.concert.domain.concert.service.ConcertService;
 import com.indie.concert.domain.concert.service.VenueService;
@@ -42,7 +43,7 @@ public class ConcertController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(required = false) Region region,
-            @RequestParam(required = false) String genre,
+            @RequestParam(required = false) Genre genre,
             @RequestParam(required = false) ConcertEntity.Type type,
             @RequestParam(required = false) @Positive Long artistId,
             @RequestParam(defaultValue = "0") @PositiveOrZero int page,

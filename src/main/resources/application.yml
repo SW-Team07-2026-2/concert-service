@@ -74,10 +74,8 @@ springdoc:
 app:
   internal:                                   # 들어오는 /internal/** 검증
     expected-audience: concert
-    allowed-issuers: [studio, ops]            # ✏️ 11/01 21A — 수집(ingest) 직접 호출은 닫음 · Gateway /ingest/** 경유만 (아래 ingest-issuer). TODO(결정대기): Studio · 운영 스크립트의 iss 이름
+    allowed-issuers: [studio, ops]            # 11/13 — 공연 · 공연장 배치는 관리자(Studio)를 거쳐서만 들어옵니다 (수집기 직접 적재 경로 삭제). TODO(결정대기): 운영 스크립트의 iss 이름
     clock-skew-seconds: 30
-    ingest-issuer: gateway                    # docs/22 S1 — Gateway /ingest/** 가 수집 서명을 확인하고 발급 (sub=ingest:{키} · body_sha256)
-    ingest-paths: [/internal/concerts, /internal/concerts/ingest/diff]
   internal-token:                             # 나가는 호출 (Concert → Payment)
     issuer: concert
     ttl-seconds: 300

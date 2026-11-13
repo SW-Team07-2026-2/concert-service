@@ -1,5 +1,6 @@
 package com.indie.concert.domain.concert.service;
 
+import com.indie.concert.domain.concert.dto.response.ArtistRef;
 import com.indie.concert.domain.concert.dto.response.CalendarDay;
 import com.indie.concert.domain.concert.dto.response.ConcertCalendar;
 import com.indie.concert.domain.concert.dto.response.ConcertDetail;
@@ -7,6 +8,7 @@ import com.indie.concert.domain.concert.dto.response.ConcertSummary;
 import com.indie.concert.domain.concert.dto.response.VenueRef;
 import com.indie.concert.domain.concert.dto.response.VenueView;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
+import com.indie.concert.domain.concert.entity.Genre;
 import com.indie.concert.domain.concert.entity.Region;
 import com.indie.concert.domain.concert.entity.VenueEntity;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
@@ -35,7 +37,7 @@ import java.util.stream.Collectors;
 
 /**
  * 공연 조회 (N1 ~ N3) — 공개 API. 하루 경계는 Asia/Seoul 입니다 (DB 는 UTC).
- * 아티스트 이름 · 장르는 복제값이라 Catalog 를 부르지 않습니다 (Catalog → Concert 동기 호출도 없음 — 08 §3 의존 규칙).
+ * 라인업의 아티스트 이름 · 장르는 artist 복제 테이블에서 읽어 Catalog 를 부르지 않습니다 (Catalog → Concert 동기 호출도 없음 — 08 §3 의존 규칙).
  */
 @Service
 public class ConcertService {
@@ -44,27 +46,29 @@ public class ConcertService {
 
     private final ConcertRepository concertRepository;
     private final VenueRepository venueRepository;
+    private final LineupReader lineupReader;
     private final ZoneId zone;
     private final Clock clock;
 
-    public ConcertService(ConcertRepository concertRepository, VenueRepository venueRepository,
+    public ConcertService(ConcertRepository concertRepository, VenueRepository venueRepository, LineupReader lineupReader,
                           ConcertProperties props, Clock clock) {
         this.concertRepository = concertRepository;
         this.venueRepository = venueRepository;
+        this.lineupReader = lineupReader;
         this.zone = ZoneId.of(props.zone());
         this.clock = clock;
     }
 
     /** N1 — from 이 없으면 지금 이후 (지난 공연 제외). to 는 그날까지 포함 */
     @Transactional(readOnly = true)
-    public PageResult<ConcertSummary> list(LocalDate from, LocalDate to, Region region, String genre,
+    public PageResult<ConcertSummary> list(LocalDate from, LocalDate to, Region region, Genre genre,
                                            ConcertEntity.Type type, Long artistId, int page, int size) {
         OffsetDateTime start = from == null ? OffsetDateTime.now(clock) : startOfDay(from);
         OffsetDateTime end = to == null ? null : startOfDay(to.plusDays(1));
         if (end != null && !end.isAfter(start)) {
             throw new GeneralException(CommonErrorCode.INVALID_REQUEST, "to 는 from 이후여야 합니다");
         }
-        var filter = new ConcertRepository.Filter(start, end, region, genre == null ? null : genre.strip(), type, artistId);
+        var filter = new ConcertRepository.Filter(start, end, region, genre == null ? null : genre.name(), type, artistId);
         return PageResult.of(concertRepository.search(filter, PageRequest.of(page, size, BY_START)), this::summaries);
     }
 
@@ -73,10 +77,11 @@ public class ConcertService {
     public ConcertDetail get(long id) {
         ConcertEntity c = concertRepository.findById(id).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
         VenueEntity v = venueRepository.findById(c.getVenueId()).orElseThrow();
-        return new ConcertDetail(c.getId(), c.getTitle(), c.getType().name(), c.getArtistId(), c.getArtistName(),
-                c.getArtistGenre(), c.getStartsAt(), c.getPrice(), c.saleStatus(OffsetDateTime.now(clock)).name(),
-                c.getBookingOpenAt(), c.isQueueEnabled(),
-                new VenueView(v.getId(), v.getName(), v.getRegion().name(), v.getAddress(), v.getCapacity()));
+        return new ConcertDetail(c.getId(), c.getTitle(), c.getType().name(), c.getGenre(), lineupReader.of(c.getId()),
+                c.getStartsAt(), c.getEndsAt(), c.getPrice(), c.saleStatus(OffsetDateTime.now(clock)).name(),
+                c.getBookingOpenAt(), c.isQueueEnabled(), c.getMaxSeatsPerUser(),
+                new VenueView(v.getId(), v.getName(), v.getRegion().name(), v.getAddress(), v.getCapacity()),
+                c.getDescription(), c.getTerms(), c.getRequirements(), c.getPosterUrl(), c.getImageUrls());
     }
 
     /** N3 — 월 단위 · 날짜별 묶음. 팔로우 기준 보기는 프론트가 팔로우 목록을 artistIds 로 넘깁니다 (08 §7) */
@@ -100,11 +105,12 @@ public class ConcertService {
     private List<ConcertSummary> summaries(List<ConcertEntity> rows) {
         Map<Long, VenueEntity> venues = venueRepository.findAllById(rows.stream().map(ConcertEntity::getVenueId).distinct().toList())
                 .stream().collect(Collectors.toMap(VenueEntity::getId, Function.identity()));
+        Map<Long, List<ArtistRef>> lineups = lineupReader.of(rows.stream().map(ConcertEntity::getId).toList());
         OffsetDateTime now = OffsetDateTime.now(clock);
         return rows.stream().map(c -> {
             VenueEntity v = venues.get(c.getVenueId());
-            return new ConcertSummary(c.getId(), c.getTitle(), c.getType().name(), c.getArtistId(), c.getArtistName(),
-                    c.getArtistGenre(), c.getStartsAt(), c.getPrice(), c.saleStatus(now).name(),
+            return new ConcertSummary(c.getId(), c.getTitle(), c.getType().name(), c.getGenre(),
+                    lineups.getOrDefault(c.getId(), List.of()), c.getStartsAt(), c.getPrice(), c.saleStatus(now).name(),
                     new VenueRef(v.getId(), v.getName(), v.getRegion().name()));
         }).toList();
     }

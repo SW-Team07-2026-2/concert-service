@@ -40,6 +40,14 @@ public interface BookingJpaRepository extends JpaRepository<BookingEntity, Long>
     int clearPaying(@Param("id") long id);
 
     @Override
+    @Query(value = "SELECT status FROM booking WHERE id = :id FOR UPDATE", nativeQuery = true)
+    String lockStatus(@Param("id") long id);
+
+    @Override
+    @Query(value = "SELECT id FROM booking WHERE user_id = :userId AND status = 'PENDING' ORDER BY id", nativeQuery = true)
+    List<Long> findPendingIds(@Param("userId") long userId);
+
+    @Override
     @Modifying
     @Query(value = "UPDATE booking SET status = 'CONFIRMED' WHERE id = :id AND status = 'PENDING'", nativeQuery = true)
     int confirm(@Param("id") long id);

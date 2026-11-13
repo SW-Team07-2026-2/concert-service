@@ -1,13 +1,14 @@
 package com.indie.concert.domain.concert.repository;
 
+import com.indie.concert.domain.concert.entity.ConcertArtistEntity;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
 import com.indie.concert.domain.concert.entity.Region;
 import com.indie.concert.domain.concert.entity.VenueEntity;
-import com.indie.concert.global.common.util.SourceHash;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.Subquery;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
@@ -25,22 +26,15 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
     @Override
     default Slice<ConcertEntity> search(Filter f, Pageable pageable) {
         return findAll(Specification.where(startsFrom(f.from())).and(startsBefore(f.to())).and(inRegion(f.region()))
-                .and(equalTo("artistGenre", f.genre())).and(equalTo("type", f.type())).and(equalTo("artistId", f.artistId())),
-                pageable);
+                .and(equalTo("genre", f.genre())).and(equalTo("type", f.type()))
+                .and(withArtists(f.artistId() == null ? null : List.of(f.artistId()))), pageable);
     }
 
     @Override
     default List<ConcertEntity> findForCalendar(OffsetDateTime from, OffsetDateTime to, Collection<Long> artistIds) {
-        return artistIds == null || artistIds.isEmpty()
-                ? findByStartsAtGreaterThanEqualAndStartsAtLessThanOrderByStartsAtAscIdAsc(from, to)
-                : findByStartsAtGreaterThanEqualAndStartsAtLessThanAndArtistIdInOrderByStartsAtAscIdAsc(from, to, artistIds);
+        return findAll(Specification.where(startsFrom(from)).and(startsBefore(to)).and(withArtists(artistIds)),
+                Sort.by("startsAt").ascending().and(Sort.by("id").ascending()));
     }
-
-    List<ConcertEntity> findByStartsAtGreaterThanEqualAndStartsAtLessThanOrderByStartsAtAscIdAsc(OffsetDateTime from,
-                                                                                                 OffsetDateTime to);
-
-    List<ConcertEntity> findByStartsAtGreaterThanEqualAndStartsAtLessThanAndArtistIdInOrderByStartsAtAscIdAsc(
-            OffsetDateTime from, OffsetDateTime to, Collection<Long> artistIds);
 
     @Override
     @Query("select c from ConcertEntity c where c.startsAt <= :opensBy "
@@ -52,16 +46,19 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
     @Query("select c from ConcertEntity c where c.queueEnabled = true and c.bookingOpenAt <= :now and c.startsAt > :now")
     List<ConcertEntity> findQueueActive(@Param("now") OffsetDateTime now);
 
-    @Override
-    @Query("select new com.indie.concert.global.common.util.SourceHash(c.externalId, c.sourceHash) "
-            + "from ConcertEntity c where c.source = :source and c.externalId in :ids")
-    List<SourceHash> findHashes(@Param("source") String source, @Param("ids") Collection<String> externalIds);
-
+    /** idx_concert_artist_artist 로 그 아티스트 공연만 · genre 는 null 일 수 있어 타입을 적어 둡니다 */
     @Override
     @Modifying
-    @Query("update ConcertEntity c set c.artistName = :name, c.artistGenre = coalesce(:genre, c.artistGenre) "
-            + "where c.artistId = :artistId")
-    int updateArtist(@Param("artistId") long artistId, @Param("name") String name, @Param("genre") String genre);
+    @Query(value = """
+            UPDATE concert c SET genre = CAST(:genre AS VARCHAR), updated_at = now()
+            WHERE c.type = 'SOLO' AND c.genre IS DISTINCT FROM CAST(:genre AS VARCHAR)
+              AND c.id IN (SELECT ca.concert_id FROM concert_artist ca WHERE ca.artist_id = :artistId)
+            """, nativeQuery = true)
+    int updateSoloGenre(@Param("artistId") long artistId, @Param("genre") String genre);
+
+    @Override
+    @Query(value = "SELECT EXISTS (SELECT 1 FROM concert_seat WHERE concert_id = :concertId)", nativeQuery = true)
+    boolean hasSeats(@Param("concertId") long concertId);
 
     private static Specification<ConcertEntity> startsFrom(OffsetDateTime from) {
         if (from == null) return null;
@@ -80,6 +77,17 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
             Root<VenueEntity> v = venues.from(VenueEntity.class);
             venues.select(v.get("id")).where(cb.equal(v.get("region"), region));
             return root.get("venueId").in(venues);
+        };
+    }
+
+    /** 라인업에 한 명이라도 있는 공연 (concert_artist · idx_concert_artist_artist) */
+    private static Specification<ConcertEntity> withArtists(Collection<Long> artistIds) {
+        if (artistIds == null || artistIds.isEmpty()) return null;
+        return (root, query, cb) -> {
+            Subquery<Long> lineup = query.subquery(Long.class);
+            Root<ConcertArtistEntity> ca = lineup.from(ConcertArtistEntity.class);
+            lineup.select(ca.get("concertId")).where(ca.get("artistId").in(artistIds));
+            return root.get("id").in(lineup);
         };
     }
 

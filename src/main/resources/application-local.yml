@@ -3,10 +3,8 @@ spring:
   config.import: optional:configtree:./local-secrets/
   # 🔴 로컬 DB 도 concert_svc 유저로 붙습니다 (postgres 수퍼유저면 스키마 경계 위반이 로컬에서 통과합니다)
   datasource.url: jdbc:postgresql://localhost:5432/indie_db?currentSchema=concert&ApplicationName=concert
-  # 로컬은 엔티티가 테이블을 만듭니다. 운영은 Flyway(V1__concert_schema.sql) + validate — 둘의 일치는 ConcertSchemaTest 가 확인합니다
-  # (로컬에는 Flyway 에만 있는 부분 인덱스 uq_booking_active · CHECK 제약이 없습니다)
-  flyway.enabled: false
-  jpa.hibernate.ddl-auto: update
+  # 로컬도 운영과 같이 Flyway(V1 구조 · V2 값) + validate 로 돕니다 (application.yml 의 설정 그대로).
+  # 🔴 마이그레이션 파일을 고쳤거나 예전에 ddl-auto 로 만든 테이블이 남아 있으면 로컬 DB 의 concert 스키마를 비우고 띄우세요
   kafka.bootstrap-servers: localhost:9092
 
 springdoc:

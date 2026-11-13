@@ -9,11 +9,13 @@ import com.indie.concert.domain.booking.entity.BookingSeatEntity;
 import com.indie.concert.domain.booking.repository.BookingRepository;
 import com.indie.concert.domain.booking.repository.BookingSeatRepository;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
+import com.indie.concert.domain.concert.entity.VenueEntity;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
 import com.indie.concert.domain.concert.repository.VenueRepository;
+import com.indie.concert.domain.concert.service.LineupReader;
 import com.indie.concert.domain.queue.service.QueueService;
-import com.indie.concert.domain.seat.entity.SeatEntity;
-import com.indie.concert.domain.seat.repository.SeatRepository;
+import com.indie.concert.domain.seat.entity.ConcertSeatEntity;
+import com.indie.concert.domain.seat.repository.ConcertSeatRepository;
 import com.indie.concert.global.common.exception.GeneralException;
 import com.indie.concert.global.config.ConcertProperties;
 import org.junit.jupiter.api.Test;
@@ -28,6 +30,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -58,15 +61,16 @@ class BookingServiceTest {
 
     private final BookingRepository bookings = mock(BookingRepository.class);
     private final BookingSeatRepository bookingSeats = mock(BookingSeatRepository.class);
-    private final SeatRepository seats = mock(SeatRepository.class);
+    private final ConcertSeatRepository seats = mock(ConcertSeatRepository.class);
     private final ConcertRepository concerts = mock(ConcertRepository.class);
+    private final VenueRepository venues = mock(VenueRepository.class);
     private final PaymentClient payment = mock(PaymentClient.class);
     private final QueueService queue = mock(QueueService.class);
+    private final BookingEvents events = mock(BookingEvents.class);
     /** 트랜잭션마다 새 상태 — 롤백 요청(setRollbackOnly)은 commit 에 넘어온 상태로 확인합니다 */
     private final PlatformTransactionManager txManager = mock(PlatformTransactionManager.class);
     private final BookingService service = new BookingService(bookings, bookingSeats, seats, concerts,
-            mock(VenueRepository.class), queue, payment, mock(BookingEvents.class),
-            new TransactionTemplate(txManager),
+            venues, mock(LineupReader.class), queue, payment, events, new TransactionTemplate(txManager),
             new ConcertProperties(null, null, null, "Asia/Seoul", new ConcertProperties.Booking(7, 179, 60, 24, 30000),
                     null, null, null, null, null, null),
             Clock.fixed(NOW, ZoneOffset.UTC));
@@ -74,6 +78,7 @@ class BookingServiceTest {
     {
         when(seats.nowMillis()).thenReturn(NOW.toEpochMilli());   // DB 시계
         when(txManager.getTransaction(any())).thenAnswer(inv -> new SimpleTransactionStatus());
+        when(venues.findById(any())).thenReturn(Optional.of(mock(VenueEntity.class)));
     }
 
     /** 선점 마감이 지난 예매 — 결제부터 무효화하고 좌석을 풉니다 */
@@ -145,6 +150,32 @@ class BookingServiceTest {
         verify(payment, never()).cancel(anyLong(), anyString(), anyBoolean());
     }
 
+    /** 관리자 취소 대행 — 회원 본인 취소와 같은 규칙 (공연 24시간 전 마감) · 통과하면 사유만 ADMIN_CANCEL */
+    @Test
+    void adminCancelFollowsSameRules() {
+        BookingEntity late = mock(BookingEntity.class);
+        when(late.getStatus()).thenReturn(BookingEntity.Status.CONFIRMED);
+        when(late.getConcertId()).thenReturn(1L);
+        ConcertEntity soon = mock(ConcertEntity.class);
+        when(soon.getStartsAt()).thenReturn(NOW_AT.plusHours(23));
+        when(bookings.findById(9L)).thenReturn(Optional.of(late));
+        when(concerts.findById(1L)).thenReturn(Optional.of(soon));
+
+        assertThatThrownBy(() -> service.cancelByAdmin(9L))
+                .isInstanceOf(GeneralException.class)
+                .extracting(e -> ((GeneralException) e).getErrorCode().getCode()).isEqualTo("BOOKING_NOT_CANCELLABLE");
+        verify(payment, never()).cancel(anyLong(), anyString(), anyBoolean());
+
+        payable(8L, 77L, NOW_AT.plusMinutes(9));                                 // 결제 전 예매 (회원 3)
+        ConcertEntity concert = concert();
+        VenueEntity venue = mock(VenueEntity.class);
+        when(concerts.findById(anyLong())).thenReturn(Optional.of(concert));
+        when(venues.findById(anyLong())).thenReturn(Optional.of(venue));
+        service.cancelByAdmin(8L);
+        verify(payment).cancel(8L, "ADMIN_CANCEL", true);
+        assertThatThrownBy(() -> service.cancelByAdmin(404L)).isInstanceOf(GeneralException.class);
+    }
+
     /** 입장한 예매는 환불 없음 — 취소 마감을 줄이는 설정 변경에도 */
     @Test
     void checkedInBookingIsNotCancellable() {
@@ -167,7 +198,7 @@ class BookingServiceTest {
         when(payment.prepare(9L, 3L, 55000)).thenThrow(new PaymentClient.Unavailable("prepare", new RuntimeException("down")));
         when(bookings.cancel(9L)).thenReturn(1);
 
-        assertThatThrownBy(() -> service.create(1L, 3L, "token", 77L))
+        assertThatThrownBy(() -> service.create(1L, 3L, "token", List.of(77L)))
                 .isInstanceOf(GeneralException.class)
                 .extracting(e -> ((GeneralException) e).getErrorCode().getStatus().value()).isEqualTo(503);
         InOrder order = inOrder(bookings, seats);
@@ -184,7 +215,7 @@ class BookingServiceTest {
         when(bookings.save(any())).thenReturn(saved);
         when(seats.hold(77L, 1L, 9L, 3L)).thenReturn(0);
 
-        assertThatThrownBy(() -> service.create(1L, 3L, "token", 77L))
+        assertThatThrownBy(() -> service.create(1L, 3L, "token", List.of(77L)))
                 .isInstanceOf(GeneralException.class)
                 .extracting(e -> ((GeneralException) e).getErrorCode().getCode()).isEqualTo("SEAT_TAKEN");
         verify(payment, never()).prepare(anyLong(), anyLong(), anyInt());
@@ -198,7 +229,7 @@ class BookingServiceTest {
         when(bookings.findActive(1L, 3L)).thenReturn(Optional.of(mine));
         when(bookingSeats.findByBookingId(8L)).thenReturn(List.of(new BookingSeatEntity(8L, 76L)));
 
-        assertThatThrownBy(() -> service.create(1L, 3L, "token", 77L))
+        assertThatThrownBy(() -> service.create(1L, 3L, "token", List.of(77L)))
                 .isInstanceOfSatisfying(GeneralException.class, e -> {
                     assertThat(e.getErrorCode().getCode()).isEqualTo("HOLD_EXISTS");
                     assertThat(e.getData()).containsEntry("bookingId", 8L);
@@ -215,7 +246,8 @@ class BookingServiceTest {
         when(payment.confirm(9L, 3L, "pk-9", 55000, null)).thenReturn(new PaymentClient.Confirmed("APPROVED", null));
         when(bookings.confirm(9L)).thenReturn(1);
         when(seats.sell(9L)).thenReturn(1);
-        when(concerts.findById(1L)).thenReturn(Optional.of(mock(ConcertEntity.class)));
+        ConcertEntity concert = concert();
+        when(concerts.findById(1L)).thenReturn(Optional.of(concert));
 
         BookingPaid paid = service.pay(3L, 9L, "pk-9", 55000, null);
 
@@ -343,7 +375,7 @@ class BookingServiceTest {
         newHold(9L);
         when(payment.prepare(9L, 3L, 55000)).thenReturn(new PaymentClient.Prepared("TICKET-9", "PENDING", null));
 
-        BookingCreated created = service.create(1L, 3L, "token", 77L);
+        BookingCreated created = service.create(1L, 3L, "token", List.of(77L));
 
         verify(bookings).startHold(9L, 599);
         assertThat(created.expiresAt()).isEqualTo(NOW_AT.plusMinutes(7));
@@ -359,7 +391,7 @@ class BookingServiceTest {
         newHold(9L);
         when(payment.prepare(9L, 3L, 55000)).thenReturn(new PaymentClient.Prepared("TICKET-9", "PENDING", null));
 
-        service.create(1L, 3L, "token", 77L);
+        service.create(1L, 3L, "token", List.of(77L));
 
         verify(bookings).startHold(9L, 479);
     }
@@ -372,7 +404,7 @@ class BookingServiceTest {
         newHold(9L);
         when(payment.prepare(9L, 3L, 55000)).thenReturn(new PaymentClient.Prepared("TICKET-9", "PENDING", null));
 
-        service.create(1L, 3L, "token", 77L);
+        service.create(1L, 3L, "token", List.of(77L));
 
         verify(bookings).startHold(9L, 599);
     }
@@ -386,7 +418,7 @@ class BookingServiceTest {
         when(bookings.findActive(1L, 3L)).thenReturn(Optional.of(running));
         when(bookingSeats.findByBookingId(8L)).thenReturn(List.of(new BookingSeatEntity(8L, 77L)));
 
-        BookingCreated again = service.create(1L, 3L, "token", 77L);
+        BookingCreated again = service.create(1L, 3L, "token", List.of(77L));
 
         assertThat(again.bookingId()).isEqualTo(8L);
         assertThat(again.expiresIn()).isEqualTo(300);
@@ -405,7 +437,7 @@ class BookingServiceTest {
         newHold(9L);
         when(payment.prepare(9L, 3L, 55000)).thenReturn(new PaymentClient.Prepared("TICKET-9", "PENDING", null));
 
-        assertThat(service.create(1L, 3L, "token", 77L).bookingId()).isEqualTo(9L);
+        assertThat(service.create(1L, 3L, "token", List.of(77L)).bookingId()).isEqualTo(9L);
 
         InOrder order = inOrder(payment, bookings, seats);
         order.verify(payment).cancel(8L, "EXPIRED", false);
@@ -431,15 +463,152 @@ class BookingServiceTest {
         verify(seats, never()).startPaying(anyLong(), anyLong());
     }
 
-    private void selectable(long seatId) {
+    // ── 1인 N매 ────────────────────────────────────────────────
+
+    /** 여러 좌석은 id 순서로 잡고 금액은 좌석 가격의 합 — 요청 순서와 무관 */
+    @Test
+    void multipleSeatsAreHeldInIdOrderAndSummed() {
+        selectable(78L, 77L);
+        newHold(9L);
+        when(seats.hold(78L, 1L, 9L, 3L)).thenReturn(1);
+        when(payment.prepare(anyLong(), anyLong(), anyInt())).thenReturn(new PaymentClient.Prepared("TICKET-9", "PENDING", null));
+
+        assertThat(service.create(1L, 3L, "token", List.of(78L, 77L)).pgOrderId()).isEqualTo("TICKET-9");
+
+        verify(bookings).save(argThat(b -> b.getTotalPrice() == 110000));
+        InOrder order = inOrder(seats);
+        order.verify(seats).hold(77L, 1L, 9L, 3L);
+        order.verify(seats).hold(78L, 1L, 9L, 3L);
+        verify(bookingSeats, times(2)).save(any());
+    }
+
+    /** 하나라도 남이 잡았으면 전부 안 잡힘 — 롤백 · 409 SEAT_TAKEN (어느 좌석인지 result.seatId) */
+    @Test
+    void oneTakenSeatRollsBackAll() {
+        selectable(77L, 78L);
+        newHold(9L);
+        when(seats.hold(78L, 1L, 9L, 3L)).thenReturn(0);
+
+        assertThatThrownBy(() -> service.create(1L, 3L, "token", List.of(77L, 78L)))
+                .isInstanceOfSatisfying(GeneralException.class, e -> {
+                    assertThat(e.getErrorCode().getCode()).isEqualTo("SEAT_TAKEN");
+                    assertThat(e.getData()).containsEntry("seatId", 78L);
+                });
+        verify(txManager).rollback(any());
+        verify(payment, never()).prepare(anyLong(), anyLong(), anyInt());
+    }
+
+    /** 공연의 1인 매수를 넘으면 409 — 예매를 만들지 않음 */
+    @Test
+    void moreSeatsThanLimitIsRejected() {
+        selectable(1L, 2L, 3L, 4L, 5L);
+
+        assertThatThrownBy(() -> service.create(1L, 3L, "token", List.of(1L, 2L, 3L, 4L, 5L)))
+                .extracting(e -> ((GeneralException) e).getErrorCode().getCode()).isEqualTo("SEAT_LIMIT_EXCEEDED");
+        verify(bookings, never()).save(any());
+    }
+
+    /** 다른 공연 좌석이 섞이면 404 */
+    @Test
+    void seatOfAnotherConcertIsNotFound() {
+        selectable(77L);
+
+        assertThatThrownBy(() -> service.create(1L, 3L, "token", List.of(77L, 99L)))
+                .extracting(e -> ((GeneralException) e).getErrorCode().getCode()).isEqualTo("SEAT_NOT_FOUND");
+    }
+
+    // ── 취소 알림 · 탈퇴 ───────────────────────────────────────
+
+    /** 확정 예매 취소(환불)만 booking.cancelled — 예매 행을 잠그고 본 상태로 정합니다 */
+    @Test
+    void cancellingConfirmedBookingPublishesCancelled() {
+        BookingEntity booking = pending(9L, null);
+        when(booking.getStatus()).thenReturn(BookingEntity.Status.CONFIRMED);
+        when(booking.getConcertId()).thenReturn(1L);
+        ConcertEntity concert = concert();
+        when(concert.getStartsAt()).thenReturn(NOW_AT.plusDays(3));
+        when(bookings.findByIdAndUserId(9L, 3L)).thenReturn(Optional.of(booking));
+        when(bookings.findById(9L)).thenReturn(Optional.of(booking));
+        when(concerts.findById(1L)).thenReturn(Optional.of(concert));
+        when(payment.cancel(9L, "USER_CANCEL", true)).thenReturn("CANCELLED");
+        when(bookings.lockStatus(9L)).thenReturn("CONFIRMED");
+        when(bookings.cancel(9L)).thenReturn(1);
+        when(seats.releaseBooking(9L)).thenReturn(2);
+
+        service.cancel(3L, 9L);
+
+        InOrder order = inOrder(payment, bookings, seats, events);
+        order.verify(payment).cancel(9L, "USER_CANCEL", true);
+        order.verify(bookings).lockStatus(9L);
+        order.verify(bookings).cancel(9L);
+        order.verify(seats).releaseBooking(9L);
+        order.verify(events).bookingCancelled(any(), any(), any(), anyInt(), any());
+    }
+
+    /** 결제 전 선택 취소는 알림 없음 */
+    @Test
+    void cancellingPendingBookingPublishesNothing() {
+        BookingEntity booking = pending(9L, NOW_AT.plusMinutes(5));
+        when(booking.getConcertId()).thenReturn(1L);
+        when(bookings.findByIdAndUserId(9L, 3L)).thenReturn(Optional.of(booking));
+        when(bookings.findById(9L)).thenReturn(Optional.of(booking));
+        ConcertEntity concert = concert();
+        when(concerts.findById(1L)).thenReturn(Optional.of(concert));
+        when(payment.cancel(9L, "USER_CANCEL", true)).thenReturn("CANCELLED");
+        when(bookings.lockStatus(9L)).thenReturn("PENDING");
+        when(bookings.cancel(9L)).thenReturn(1);
+
+        service.cancel(3L, 9L);
+
+        verify(seats).releaseBooking(9L);
+        verify(events, never()).bookingCancelled(any(), any(), any(), anyInt(), any());
+    }
+
+    /** 탈퇴 — 결제 전 예매는 Payment 를 먼저 끝내고 좌석 반환 · 확정 예매는 건드리지 않음 (findPendingIds 가 PENDING 만) */
+    @Test
+    void withdrawnUserPendingHoldsAreReleased() {
+        when(bookings.findPendingIds(3L)).thenReturn(List.of(5L));
+        when(payment.cancel(5L, "USER_WITHDRAWN", false)).thenReturn("CANCELLED");
+        when(bookings.expire(5L)).thenReturn(1);
+
+        service.releaseWithdrawn(3L);
+
+        InOrder order = inOrder(payment, bookings, seats);
+        order.verify(payment).cancel(5L, "USER_WITHDRAWN", false);
+        order.verify(bookings).expire(5L);
+        order.verify(seats).releaseBooking(5L);
+    }
+
+    /** Payment 불통 — 좌석은 그대로 두고 예외 (이벤트 재시도) */
+    @Test
+    void withdrawnRetriesWhilePaymentIsDown() {
+        when(bookings.findPendingIds(3L)).thenReturn(List.of(5L));
+        when(payment.cancel(anyLong(), anyString(), anyBoolean())).thenThrow(new PaymentClient.Unavailable("cancel", new RuntimeException("down")));
+
+        assertThatThrownBy(() -> service.releaseWithdrawn(3L)).isInstanceOf(IllegalStateException.class);
+        verify(seats, never()).releaseBooking(anyLong());
+    }
+
+    private static ConcertEntity concert() {
         ConcertEntity concert = mock(ConcertEntity.class);
         when(concert.getId()).thenReturn(1L);
+        return concert;
+    }
+
+    /** 1인 4매 공연 · 좌석은 전부 55,000원 */
+    private void selectable(long... seatIds) {
+        ConcertEntity concert = concert();
+        when(concert.getMaxSeatsPerUser()).thenReturn(4);
         when(concerts.findById(1L)).thenReturn(Optional.of(concert));
-        SeatEntity seat = mock(SeatEntity.class);
-        when(seat.getConcertId()).thenReturn(1L);
-        when(seat.getPrice()).thenReturn(55000);
-        when(seat.getStatus()).thenReturn(SeatEntity.Status.AVAILABLE);
-        when(seats.findById(seatId)).thenReturn(Optional.of(seat));
+        List<ConcertSeatEntity> found = new ArrayList<>();
+        for (long id : seatIds) {
+            ConcertSeatEntity seat = mock(ConcertSeatEntity.class);
+            when(seat.getId()).thenReturn(id);
+            when(seat.getConcertId()).thenReturn(1L);
+            when(seat.getPrice()).thenReturn(55000);
+            found.add(seat);
+        }
+        when(seats.findAllById(any())).thenReturn(found);
     }
 
     /** 새 선점 — 저장 · 선점 성공 · 다시 읽으면 서버 마감 = 지금 + 599초 */
