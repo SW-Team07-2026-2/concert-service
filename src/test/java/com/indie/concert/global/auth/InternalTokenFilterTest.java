@@ -13,11 +13,9 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Date;
-import java.util.HexFormat;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -27,8 +25,7 @@ class InternalTokenFilterTest {
     private static final String SECRET = "0123456789abcdef0123456789abcdef-local";
 
     private final InternalTokenFilter filter = new InternalTokenFilter(SECRET,
-            new ConcertProperties.Internal("concert", List.of("studio", "ops"), 30, "gateway",
-                    List.of("/internal/concerts", "/internal/concerts/ingest/diff")), Clock.systemUTC(), new ObjectMapper());
+            new ConcertProperties.Internal("concert", List.of("studio", "ops"), 30), Clock.systemUTC(), new ObjectMapper());
 
     private MockHttpServletResponse call(String token) throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/internal/x");
@@ -60,14 +57,10 @@ class InternalTokenFilterTest {
         assertThat(call(token(SECRET, "studio", "payment", 300)).getStatus()).isEqualTo(401);
     }
 
+    /** 11/13 — 수집 경로를 없애 iss=gateway(수집) · ingest 토큰도 받지 않습니다. 공연은 관리자(studio)를 거쳐서만 */
     @Test
     void unknownIssuerIs401() throws Exception {
         assertThat(call(token(SECRET, "gateway", "concert", 300)).getStatus()).isEqualTo(401);
-    }
-
-    /** 21A — 수집기가 공유 시크릿으로 직접 부르던 경로는 닫힘. 수집은 Gateway /ingest/** 가 발급한 iss=gateway 토큰만 */
-    @Test
-    void directIngestIssuerIs401() throws Exception {
         assertThat(call(token(SECRET, "ingest", "concert", 300)).getStatus()).isEqualTo(401);
     }
 
@@ -94,73 +87,5 @@ class InternalTokenFilterTest {
                 .issuer(iss).audience(aud).expirationTime(Date.from(Instant.now().plusSeconds(expInSeconds))).build());
         jwt.sign(new MACSigner(secret.getBytes(StandardCharsets.UTF_8)));
         return jwt.serialize();
-    }
-
-    // ── 수집 경로 (docs/22 S1 · S2) — Gateway 가 수집 서명을 확인하고 발급한 토큰 ─────────────
-
-    private static final String BODY = "{\"items\":[{\"source\":\"melon\",\"external_id\":\"a1\"}]}";
-
-    @Test
-    void gatewayIngestTokenWithSameBodyPassesAndBodyIsReadableAgain() throws Exception {
-        MockFilterChain chain = new MockFilterChain();
-        MockHttpServletResponse response = ingestCall("/internal/concerts", ingestToken("ingest:crawler-2026-11", sha256(BODY)), BODY, chain);
-        assertThat(response.getStatus()).isEqualTo(200);
-        assertThat(new String(chain.getRequest().getInputStream().readAllBytes(), StandardCharsets.UTF_8)).isEqualTo(BODY);
-    }
-
-    /** 가로챈 토큰을 다른 본문에 붙여도 통과하지 않음 */
-    @Test
-    void gatewayIngestTokenWithOtherBodyIs400() throws Exception {
-        MockHttpServletResponse response = ingestCall("/internal/concerts", ingestToken("ingest:crawler-2026-11", sha256(BODY)),
-                BODY.replace("a1", "a2"), new MockFilterChain());
-        assertThat(response.getStatus()).isEqualTo(400);
-        assertThat(response.getContentAsString()).contains("BODY_DIGEST_MISMATCH");
-    }
-
-    /** 수집 토큰으로 수집 API 가 아닌 내부 경로는 못 부름 */
-    /** 1 MiB 를 넘는 본문은 해시 불일치가 아니라 413 */
-    @Test
-    void gatewayIngestBodyOver1MiBIs413() throws Exception {
-        String big = "{\"items\":[\"" + "a".repeat(1024 * 1024) + "\"]}";
-        MockHttpServletResponse response = ingestCall("/internal/concerts", ingestToken("ingest:crawler-2026-11", sha256(big)),
-                big, new MockFilterChain());
-        assertThat(response.getStatus()).isEqualTo(413);
-        assertThat(response.getContentAsString()).contains("PAYLOAD_TOO_LARGE");
-    }
-
-    @Test
-    void gatewayIngestTokenOnOtherInternalPathIs401() throws Exception {
-        assertThat(ingestCall("/internal/queue/rebuild", ingestToken("ingest:crawler-2026-11", sha256(BODY)), BODY, new MockFilterChain())
-                .getStatus()).isEqualTo(401);
-    }
-
-    @Test
-    void gatewayTokenWithoutIngestSubjectOrDigestIs401() throws Exception {
-        assertThat(ingestCall("/internal/concerts", ingestToken(null, sha256(BODY)), BODY, new MockFilterChain()).getStatus()).isEqualTo(401);
-        assertThat(ingestCall("/internal/concerts", ingestToken("ingest:crawler-2026-11", null), BODY, new MockFilterChain()).getStatus()).isEqualTo(401);
-    }
-
-    private MockHttpServletResponse ingestCall(String path, String token, String body, MockFilterChain chain) throws Exception {
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", path);
-        request.addHeader(InternalTokenFilter.HEADER, token);
-        request.setContentType("application/json");
-        request.setContent(body.getBytes(StandardCharsets.UTF_8));
-        MockHttpServletResponse response = new MockHttpServletResponse();
-        filter.doFilter(request, response, chain);
-        return response;
-    }
-
-    private static String ingestToken(String sub, String bodySha256) throws Exception {
-        JWTClaimsSet.Builder claims = new JWTClaimsSet.Builder().issuer("gateway").audience("concert")
-                .expirationTime(Date.from(Instant.now().plusSeconds(60)));
-        if (sub != null) claims.subject(sub);
-        if (bodySha256 != null) claims.claim("body_sha256", bodySha256);
-        SignedJWT jwt = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256), claims.build());
-        jwt.sign(new MACSigner(SECRET.getBytes(StandardCharsets.UTF_8)));
-        return jwt.serialize();
-    }
-
-    private static String sha256(String body) throws Exception {
-        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(body.getBytes(StandardCharsets.UTF_8)));
     }
 }

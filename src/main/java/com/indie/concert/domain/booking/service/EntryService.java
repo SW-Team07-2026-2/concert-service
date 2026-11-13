@@ -5,6 +5,7 @@ import com.indie.concert.domain.booking.dto.response.ConcertRef;
 import com.indie.concert.domain.booking.dto.response.EntryQr;
 import com.indie.concert.domain.booking.dto.response.SeatRef;
 import com.indie.concert.domain.booking.entity.BookingEntity;
+import com.indie.concert.domain.booking.entity.BookingSeatEntity;
 import com.indie.concert.domain.booking.exception.BookingErrorCode;
 import com.indie.concert.domain.booking.repository.BookingRepository;
 import com.indie.concert.domain.booking.repository.BookingSeatRepository;
@@ -12,7 +13,7 @@ import com.indie.concert.domain.concert.entity.ConcertEntity;
 import com.indie.concert.domain.concert.entity.VenueEntity;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
 import com.indie.concert.domain.concert.repository.VenueRepository;
-import com.indie.concert.domain.seat.repository.SeatRepository;
+import com.indie.concert.domain.seat.repository.ConcertSeatRepository;
 import com.indie.concert.global.common.exception.CommonErrorCode;
 import com.indie.concert.global.common.exception.GeneralException;
 import com.indie.concert.global.config.ConcertProperties;
@@ -43,7 +44,7 @@ public class EntryService {
 
     private final BookingRepository bookingRepository;
     private final BookingSeatRepository bookingSeatRepository;
-    private final SeatRepository seatRepository;
+    private final ConcertSeatRepository concertSeatRepository;
     private final ConcertRepository concertRepository;
     private final VenueRepository venueRepository;
     private final EntryQrTokens tokens;
@@ -51,11 +52,11 @@ public class EntryService {
     private final Clock clock;
 
     public EntryService(BookingRepository bookingRepository, BookingSeatRepository bookingSeatRepository,
-                        SeatRepository seatRepository, ConcertRepository concertRepository, VenueRepository venueRepository,
+                        ConcertSeatRepository concertSeatRepository, ConcertRepository concertRepository, VenueRepository venueRepository,
                         EntryQrTokens tokens, ConcertProperties props, Clock clock) {
         this.bookingRepository = bookingRepository;
         this.bookingSeatRepository = bookingSeatRepository;
-        this.seatRepository = seatRepository;
+        this.concertSeatRepository = concertSeatRepository;
         this.concertRepository = concertRepository;
         this.venueRepository = venueRepository;
         this.tokens = tokens;
@@ -109,9 +110,9 @@ public class EntryService {
             throw new GeneralException(BookingErrorCode.ENTRY_NOT_AVAILABLE, "취소된 예매입니다");   // QR 을 받은 뒤 환불됨
         }
         log.info("booking_checked_in bookingId={} concertId={} checkerId={}", qr.bookingId(), concertId, checkerId);
-        List<SeatRef> seats = bookingSeatRepository.findByBookingId(qr.bookingId()).stream()
-                .map(bs -> seatRepository.findById(bs.getSeatId()).orElseThrow())
-                .map(s -> new SeatRef(s.getId(), s.getSection(), s.getRowNo(), s.getSeatNo(), s.getPrice())).toList();
+        List<SeatRef> seats = concertSeatRepository.findRefs(bookingSeatRepository.findByBookingId(qr.bookingId()).stream()
+                        .map(BookingSeatEntity::getConcertSeatId).toList()).stream()
+                .map(r -> new SeatRef(r.getId(), r.getFloor(), r.getSection(), r.getRowNo(), r.getSeatNo(), r.getPrice())).toList();
         return new CheckInResult(qr.bookingId(), seats, now);
     }
 }

@@ -1,8 +1,7 @@
 package com.indie.concert.domain.seat.controller;
 
-import com.indie.concert.domain.seat.dto.request.SeatGridRequest;
-import com.indie.concert.domain.seat.dto.response.SeatCreatedResponse;
-import com.indie.concert.domain.seat.dto.response.SeatSection;
+import com.indie.concert.domain.seat.dto.request.SeatPriceRequest;
+import com.indie.concert.domain.seat.dto.response.SeatPriced;
 import com.indie.concert.domain.seat.service.SeatService;
 import com.indie.concert.global.common.response.ApiResponse;
 import jakarta.validation.Valid;
@@ -13,8 +12,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 내부 — 좌석 일괄 생성 (15 에 없음 · 추가). 시드 스크립트와 Studio S5(폴리곤 → 좌석)가 부를 자리입니다 (08 §12.4 — 대량 작업은 Concert 쪽에서).
- * X-Internal-Token 필수 · snake_case (호출자가 스크립트).
+ * 내부 — 관리자 공연 좌석 가격. 공연장 배치(무대 그리기로 저장한 좌석) 중 이 공연에서 팔 좌석과 좌석별 가격을 받습니다.
+ * X-Internal-Token(iss=studio) 필수 · camelCase. 다시 보내면 가격을 바꿉니다 (선점 · 판매된 좌석 제외).
  */
 @RestController
 public class InternalSeatController {
@@ -25,9 +24,8 @@ public class InternalSeatController {
         this.seatService = seatService;
     }
 
-    @PostMapping("/internal/concerts/{id}/seats")
-    public ApiResponse<SeatCreatedResponse> create(@PathVariable @Positive long id, @Valid @RequestBody SeatGridRequest request) {
-        return ApiResponse.onSuccess(new SeatCreatedResponse(seatService.createGrid(id, request.sections().stream()
-                .map(s -> new SeatSection(s.section(), s.rows(), s.seatsPerRow(), s.price())).toList())));
+    @PostMapping("/internal/admin/concerts/{id}/seats")
+    public ApiResponse<SeatPriced> price(@PathVariable @Positive long id, @Valid @RequestBody SeatPriceRequest request) {
+        return ApiResponse.onSuccess(seatService.price(id, request.seats()));
     }
 }

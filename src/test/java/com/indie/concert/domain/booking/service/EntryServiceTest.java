@@ -8,8 +8,7 @@ import com.indie.concert.domain.booking.repository.BookingSeatRepository;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
 import com.indie.concert.domain.concert.repository.VenueRepository;
-import com.indie.concert.domain.seat.entity.SeatEntity;
-import com.indie.concert.domain.seat.repository.SeatRepository;
+import com.indie.concert.domain.seat.repository.ConcertSeatRepository;
 import com.indie.concert.global.common.exception.GeneralException;
 import org.junit.jupiter.api.Test;
 
@@ -39,7 +38,7 @@ class EntryServiceTest {
 
     private final BookingRepository bookings = mock(BookingRepository.class);
     private final BookingSeatRepository bookingSeats = mock(BookingSeatRepository.class);
-    private final SeatRepository seats = mock(SeatRepository.class);
+    private final ConcertSeatRepository seats = mock(ConcertSeatRepository.class);
     private final ConcertRepository concerts = mock(ConcertRepository.class);
     private final EntryService service = at(NOW);
 
@@ -98,18 +97,19 @@ class EntryServiceTest {
     void checkInRecordsCheckerAndReturnsSeat() {
         when(bookings.checkIn(30L, 77L, NOW_AT)).thenReturn(1);
         when(bookingSeats.findByBookingId(30L)).thenReturn(List.of(new BookingSeatEntity(30L, 901L)));
-        SeatEntity seat = mock(SeatEntity.class);
+        ConcertSeatRepository.SeatRefRow seat = mock(ConcertSeatRepository.SeatRefRow.class);
         when(seat.getId()).thenReturn(901L);
+        when(seat.getFloor()).thenReturn("1F");
         when(seat.getSection()).thenReturn("A");
-        when(seat.getRowNo()).thenReturn("1");
+        when(seat.getRowNo()).thenReturn(1);
         when(seat.getSeatNo()).thenReturn(3);
         when(seat.getPrice()).thenReturn(55000);
-        when(seats.findById(901L)).thenReturn(Optional.of(seat));
+        when(seats.findRefs(List.of(901L))).thenReturn(List.of(seat));
 
         CheckInResult result = service.checkIn(42L, qr(), 77L);
 
         assertThat(result.bookingId()).isEqualTo(30L);
-        assertThat(result.seats()).singleElement().satisfies(s -> assertThat(s.section() + s.row() + "-" + s.number()).isEqualTo("A1-3"));
+        assertThat(result.seats()).singleElement().satisfies(s -> assertThat(s.floor() + " " + s.section() + s.row() + "-" + s.number()).isEqualTo("1F A1-3"));
         assertThat(result.checkedInAt()).isEqualTo(NOW_AT);
     }
 

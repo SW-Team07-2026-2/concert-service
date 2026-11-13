@@ -22,7 +22,7 @@ public interface BookingRepository {
 
     List<BookingEntity> findByUserIdAndIdLessThanOrderByIdDesc(Long userId, Long id, Limit limit);
 
-    /** 이 공연에서 진행 중 · 확정된 내 예매 (1인 1석) */
+    /** 이 공연에서 진행 중 · 확정된 내 예매 (공연당 1건 — 그 안에 좌석 N개) */
     Optional<BookingEntity> findActive(long concertId, long userId);
 
     BookingEntity save(BookingEntity booking);
@@ -37,6 +37,12 @@ public interface BookingRepository {
     int markPaying(long id);
 
     int clearPaying(long id);
+
+    /** 취소 전에 예매 행을 잠그고 지금 상태를 봅니다 — 확정 예매 취소(환불)일 때만 booking.cancelled 를 내기 위해. 없으면 null */
+    String lockStatus(long id);
+
+    /** user.withdrawn — 탈퇴 회원의 결제 전 예매 (idx_booking_user) */
+    List<Long> findPendingIds(long userId);
 
     /** PENDING → CONFIRMED. 0 = 이미 전이됨 */
     int confirm(long id);
