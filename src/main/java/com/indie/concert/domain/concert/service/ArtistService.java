@@ -1,5 +1,6 @@
 package com.indie.concert.domain.concert.service;
 
+import com.indie.concert.domain.concert.entity.Genre;
 import com.indie.concert.domain.concert.repository.ArtistRepository;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
 import org.slf4j.Logger;
@@ -24,7 +25,11 @@ public class ArtistService {
     }
 
     @Transactional
-    public void apply(long artistId, String name, String genre, OffsetDateTime occurredAt) {
+    public void apply(long artistId, String name, String genreCode, OffsetDateTime occurredAt) {
+        // 장르는 Catalog 의 목록과 같아야 합니다 (ck_artist_genre). 모르는 값이 오면 복제를 멈추지 않고 장르 없음으로 둡니다 — Genre 를 Catalog 와 맞춰야 합니다
+        Genre parsed = Genre.parse(genreCode);
+        if (genreCode != null && parsed == null) log.warn("artist_genre_unknown artistId={} genre={}", artistId, genreCode);
+        String genre = parsed == null ? null : parsed.name();
         if (artistRepository.upsert(artistId, name.strip(), genre, occurredAt) == 0) {
             log.info("artist_event_stale artistId={} occurredAt={}", artistId, occurredAt);
             return;

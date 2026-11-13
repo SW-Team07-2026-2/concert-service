@@ -62,4 +62,13 @@ public interface LayoutJpaRepository extends JpaRepository<SectionEntity, Long>,
             ORDER BY f.name, sc.name
             """, nativeQuery = true)
     List<SectionRow> findSections(@Param("venueId") long venueId);
+
+    @Override
+    @Query(value = """
+            SELECT s.id AS id, s.section_id AS sectionId, s.row_no AS rowNo, s.seat_no AS seatNo, s.x AS x, s.y AS y, s.angle AS angle
+            FROM seat s JOIN section sc ON sc.id = s.section_id JOIN floor f ON f.id = sc.floor_id
+            WHERE f.venue_id = :venueId
+            ORDER BY s.section_id, s.row_no, s.seat_no
+            """, nativeQuery = true)
+    List<SeatRow> findSeats(@Param("venueId") long venueId);
 }

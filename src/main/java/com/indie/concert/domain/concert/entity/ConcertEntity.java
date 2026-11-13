@@ -8,8 +8,11 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 
 /**
  * concert — 관리자(Studio)가 검수한 뒤에만 등록됩니다 (수집기 직접 적재 없음). 라인업은 concert_artist.
@@ -58,6 +61,19 @@ public class ConcertEntity {
 
     private String externalId;
 
+    /** 상세 · 예매 약관 · 관람 요구사항 (마크다운) — 없으면 null */
+    private String description;
+
+    private String terms;
+
+    private String requirements;
+
+    private String posterUrl;
+
+    /** 상세 이미지 — 보여 줄 순서대로 */
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    private List<String> imageUrls = List.of();
+
     private OffsetDateTime updatedAt;
 
     protected ConcertEntity() {}
@@ -94,6 +110,17 @@ public class ConcertEntity {
         this.updatedAt = now;
     }
 
+    /** 상세 · 약관 · 요구사항 · 이미지 — null 인 값은 그대로 둡니다 (imageUrls 는 보내면 목록 전체 교체) */
+    public void describe(String description, String terms, String requirements, String posterUrl, List<String> imageUrls,
+                         OffsetDateTime now) {
+        if (description != null) this.description = description;
+        if (terms != null) this.terms = terms;
+        if (requirements != null) this.requirements = requirements;
+        if (posterUrl != null) this.posterUrl = posterUrl;
+        if (imageUrls != null) this.imageUrls = List.copyOf(imageUrls);
+        this.updatedAt = now;
+    }
+
     /** 단독 공연은 아티스트 장르 · 페스티벌은 관리자 값 — 어느 쪽인지는 서비스가 정합니다 */
     public void changeGenre(String genre, OffsetDateTime now) {
         this.genre = genre;
@@ -120,4 +147,9 @@ public class ConcertEntity {
     public int getMaxSeatsPerUser() { return maxSeatsPerUser; }
     public String getSource() { return source; }
     public String getExternalId() { return externalId; }
+    public String getDescription() { return description; }
+    public String getTerms() { return terms; }
+    public String getRequirements() { return requirements; }
+    public String getPosterUrl() { return posterUrl; }
+    public List<String> getImageUrls() { return imageUrls; }
 }

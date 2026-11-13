@@ -26,6 +26,19 @@ public interface LayoutRepository {
     /** 좌석 화면 — 공연장의 층 · 구역 (층 이름 · 구역 이름 순) */
     List<SectionRow> findSections(long venueId);
 
+    /** 공연장의 좌석 전부 — 구역 · 열 · 번호 순 */
+    List<SeatRow> findSeats(long venueId);
+
+    interface SeatRow {
+        Long getId();
+        Long getSectionId();
+        Integer getRowNo();
+        Integer getSeatNo();
+        BigDecimal getX();
+        BigDecimal getY();
+        BigDecimal getAngle();
+    }
+
     interface SectionRow {
         Long getFloorId();
         String getFloorName();

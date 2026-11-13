@@ -88,11 +88,13 @@ public class ConcertAdminService {
         }
         List<ArtistEntity> lineup = lineup(r.type(), r.artistIds());
         if (r.type() == ConcertEntity.Type.SOLO && r.genre() != null) throw soloGenre();
-        String genre = r.type() == ConcertEntity.Type.SOLO ? lineup.get(0).getGenre() : r.genre();
+        String genre = r.type() == ConcertEntity.Type.SOLO ? lineup.get(0).getGenre() : r.genre() == null ? null : r.genre().name();
         checkTimes(r.startsAt(), r.endsAt(), r.bookingOpenAt());
         ConcertEntity c = concertRepository.save(new ConcertEntity(venue.getId(), r.title().strip(), r.type(), genre,
                 r.startsAt(), r.endsAt(), r.price(), r.bookingOpenAt(), r.queueEnabled() == null || r.queueEnabled(),
                 r.maxSeatsPerUser(), r.source(), r.externalId(), OffsetDateTime.now(clock)));
+        c.describe(blankToNull(r.description()), blankToNull(r.terms()), blankToNull(r.requirements()), blankToNull(r.posterUrl()),
+                r.imageUrls(), OffsetDateTime.now(clock));
         concertArtistRepository.insertLineup(c.getId(), r.artistIds().toArray(Long[]::new));
         events.concertCreated(c, venue, lineup.stream().map(a -> new ArtistRef(a.getId(), a.getName(), a.getGenre())).toList());
         log.info("concert_created concertId={} type={} artists={}", c.getId(), c.getType(), r.artistIds());
@@ -112,7 +114,8 @@ public class ConcertAdminService {
         OffsetDateTime now = OffsetDateTime.now(clock);
         c.update(r.venueId(), r.title() == null ? null : r.title().strip(), r.startsAt(), r.endsAt(), r.price(),
                 r.bookingOpenAt(), r.queueEnabled(), r.maxSeatsPerUser(), now);
-        if (r.genre() != null) c.changeGenre(r.genre(), now);
+        c.describe(r.description(), r.terms(), r.requirements(), r.posterUrl(), r.imageUrls(), now);
+        if (r.genre() != null) c.changeGenre(r.genre().name(), now);
         checkTimes(c.getStartsAt(), c.getEndsAt(), c.getBookingOpenAt());
         log.info("concert_updated concertId={}", id);
         return concertService.get(id);
@@ -150,6 +153,10 @@ public class ConcertAdminService {
     private static void checkTimes(OffsetDateTime startsAt, OffsetDateTime endsAt, OffsetDateTime bookingOpenAt) {
         if (endsAt != null && !endsAt.isAfter(startsAt)) throw invalid("endsAt 은 startsAt 이후여야 합니다");
         if (bookingOpenAt != null && !bookingOpenAt.isBefore(startsAt)) throw invalid("bookingOpenAt 은 startsAt 이전이어야 합니다");
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s;
     }
 
     private static GeneralException soloGenre() {
