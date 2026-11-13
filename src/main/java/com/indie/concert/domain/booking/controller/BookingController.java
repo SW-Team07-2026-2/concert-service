@@ -39,14 +39,14 @@ public class BookingController {
     }
 
     /**
-     * N10 좌석 선점 — 🔴 요청에 금액 필드가 없습니다. 금액은 좌석 가격으로 서버가 정합니다 (11/04 77A).
-     * 남이 잡은 좌석 409 SEAT_TAKEN · 내 선점이 다른 좌석에 있으면 409 HOLD_EXISTS (result.bookingId — N13 으로 취소한 뒤 다시)
+     * N10 좌석 선점 — seatIds 로 여러 좌석 (공연의 maxSeatsPerUser 까지). 🔴 요청에 금액 필드가 없습니다. 금액은 좌석 가격의 합으로 서버가 정합니다 (11/04 77A).
+     * 하나라도 남이 잡았으면 전부 안 잡히고 409 SEAT_TAKEN (result.seatId) · 내 선점이 다른 좌석에 있으면 409 HOLD_EXISTS (result.bookingId — N13 으로 취소한 뒤 다시)
      */
     @PostMapping("/api/concerts/{id}/bookings")
     public ApiResponse<BookingCreated> create(@CurrentUser Long userId, @PathVariable @Positive long id,
                                          @RequestHeader(value = "X-Entry-Token", required = false) String entryToken,
                                          @Valid @RequestBody BookingCreateRequest request) {
-        return ApiResponse.onSuccess(bookingService.create(id, userId, entryToken, request.seatId()));
+        return ApiResponse.onSuccess(bookingService.create(id, userId, entryToken, request.seatIds()));
     }
 
     /**

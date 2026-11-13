@@ -1,8 +1,10 @@
 package com.indie.concert.domain.concert.service;
 
+import com.indie.concert.domain.concert.dto.response.ArtistRef;
 import com.indie.concert.domain.concert.dto.response.UpcomingConcert;
 import com.indie.concert.domain.concert.dto.response.VenueDetail;
 import com.indie.concert.domain.concert.dto.response.VenueView;
+import com.indie.concert.domain.concert.entity.ConcertEntity;
 import com.indie.concert.domain.concert.entity.Region;
 import com.indie.concert.domain.concert.entity.VenueEntity;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
@@ -19,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 
 /** 공연장 (N14 · N15, 10/14 추가) — "이 공연장에서 이번 달에 뭐 하지?" */
 @Service
@@ -28,11 +31,14 @@ public class VenueService {
 
     private final VenueRepository venueRepository;
     private final ConcertRepository concertRepository;
+    private final LineupReader lineupReader;
     private final Clock clock;
 
-    public VenueService(VenueRepository venueRepository, ConcertRepository concertRepository, Clock clock) {
+    public VenueService(VenueRepository venueRepository, ConcertRepository concertRepository, LineupReader lineupReader,
+                        Clock clock) {
         this.venueRepository = venueRepository;
         this.concertRepository = concertRepository;
+        this.lineupReader = lineupReader;
         this.clock = clock;
     }
 
@@ -49,10 +55,12 @@ public class VenueService {
     public VenueDetail get(long id) {
         VenueEntity v = venueRepository.findById(id).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
         OffsetDateTime now = OffsetDateTime.now(clock);
-        List<UpcomingConcert> upcoming = concertRepository
-                .findByVenueIdAndStartsAtGreaterThanEqualOrderByStartsAtAsc(id, now, Limit.of(UPCOMING_LIMIT)).stream()
-                .map(c -> new UpcomingConcert(c.getId(), c.getTitle(), c.getType().name(), c.getArtistId(), c.getArtistName(),
-                        c.getStartsAt(), c.saleStatus(now).name()))
+        List<ConcertEntity> concerts = concertRepository
+                .findByVenueIdAndStartsAtGreaterThanEqualOrderByStartsAtAsc(id, now, Limit.of(UPCOMING_LIMIT));
+        Map<Long, List<ArtistRef>> lineups = lineupReader.of(concerts.stream().map(ConcertEntity::getId).toList());
+        List<UpcomingConcert> upcoming = concerts.stream()
+                .map(c -> new UpcomingConcert(c.getId(), c.getTitle(), c.getType().name(),
+                        lineups.getOrDefault(c.getId(), List.of()), c.getStartsAt(), c.saleStatus(now).name()))
                 .toList();
         return new VenueDetail(v.getId(), v.getName(), v.getRegion().name(), v.getAddress(), v.getCapacity(), upcoming);
     }

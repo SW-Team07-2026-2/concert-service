@@ -6,14 +6,16 @@ import com.indie.concert.domain.booking.dto.response.BookingCreated;
 import com.indie.concert.domain.booking.repository.BookingRepository;
 import com.indie.concert.domain.booking.repository.BookingSeatRepository;
 import com.indie.concert.domain.booking.service.BookingService;
+import com.indie.concert.domain.concert.repository.ConcertArtistRepository;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
 import com.indie.concert.domain.concert.repository.VenueRepository;
+import com.indie.concert.domain.concert.service.LineupReader;
 import com.indie.concert.domain.queue.repository.QueueEntryRepository;
 import com.indie.concert.domain.queue.repository.QueueEntryRepositoryAdapter;
 import com.indie.concert.domain.queue.repository.QueueStore;
 import com.indie.concert.domain.queue.repository.RedisQueueStore;
 import com.indie.concert.domain.queue.service.QueueService;
-import com.indie.concert.domain.seat.repository.SeatRepository;
+import com.indie.concert.domain.seat.repository.ConcertSeatRepository;
 import com.indie.concert.global.common.exception.GeneralException;
 import com.indie.concert.global.config.ConcertProperties;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -67,7 +69,7 @@ import static org.mockito.Mockito.mock;
 /**
  * 좌석 선점 (11/04 77A) 완료 기준 — 실제 PostgreSQL(Flyway · DB now()) + 실제 Redis(입장 토큰 TTL) 위에서 BookingService 를 그대로 돌립니다.
  * Payment 만 가짜입니다 (승인 호출 횟수 = 토스 호출 횟수 — Payment 는 승인 요청을 받아야만 토스를 부릅니다). Docker 가 없으면 건너뜁니다.
- * ③ [A,B] vs [B,C] 는 1인 1석이라 해당 없음 (79A).
+ * ③ [A,B] vs [B,C] — 1인 N매에서 겹치는 좌석을 동시에 골라도 한 명만 전부 잡고, 진 쪽은 하나도 남지 않습니다 (교착 없음).
  */
 @Testcontainers(disabledWithoutDocker = true)
 @DataJpaTest(properties = "spring.jpa.hibernate.ddl-auto=validate")
@@ -113,7 +115,8 @@ class SeatHoldFlowTest {
 
     @Autowired BookingRepository bookings;
     @Autowired BookingSeatRepository bookingSeats;
-    @Autowired SeatRepository seats;
+    @Autowired ConcertSeatRepository seats;
+    @Autowired ConcertArtistRepository concertArtists;
     @Autowired ConcertRepository concerts;
     @Autowired VenueRepository venues;
     @Autowired QueueEntryRepository queueEntries;
@@ -126,15 +129,15 @@ class SeatHoldFlowTest {
     @BeforeEach
     void wire() {
         QueueService queue = new QueueService(queueStore, queueEntries, concerts, PROPS, new SimpleMeterRegistry(), Clock.systemUTC());
-        service = new BookingService(bookings, bookingSeats, seats, concerts, venues, queue, payment,
-                mock(BookingEvents.class), tx, PROPS, Clock.systemUTC());
+        service = new BookingService(bookings, bookingSeats, seats, concerts, venues, new LineupReader(concertArtists), queue,
+                payment, mock(BookingEvents.class), tx, PROPS, Clock.systemUTC());
     }
 
     /** ① 100명이 같은 좌석을 동시에 → 선점 1명 · 99명 409 SEAT_TAKEN (락 없이 조건부 UPDATE 만으로) */
     @Test
     void hundredUsersOnOneSeatHaveOneHold() throws Exception {
         long concertId = concert("flow-race");
-        long seatId = seat(concertId, "1");
+        long seatId = seat(concertId);
         List<Callable<String>> tries = new ArrayList<>();
         for (long user = 1; user <= 100; user++) {
             long userId = user;
@@ -157,9 +160,9 @@ class SeatHoldFlowTest {
         long concertId = concert("flow-twice");
         for (long user = 11; user <= 15; user++) {
             long userId = user;
-            long seatId = seat(concertId, "r" + user);
+            long seatId = seat(concertId);
             String token = admit(concertId, userId, 60_000);
-            Callable<BookingCreated> pick = () -> service.create(concertId, userId, token, seatId);
+            Callable<BookingCreated> pick = () -> service.create(concertId, userId, token, List.of(seatId));
 
             List<BookingCreated> both = together(2, List.of(pick, pick));
 
@@ -171,15 +174,63 @@ class SeatHoldFlowTest {
                 .isEqualTo(5);
     }
 
+    /** ③ 1인 N매 — [A,B] 와 [B,C] 를 동시에 고르면 한 명만 두 좌석을 다 잡고, 진 쪽은 A 나 C 도 남지 않음 (id 순서로 잡아 교착 없음) */
+    @Test
+    void overlappingSeatSetsHaveOneWinner() throws Exception {
+        long concertId = concert("flow-overlap");
+        for (int round = 0; round < 10; round++) {
+            long a = seat(concertId);
+            long b = seat(concertId);
+            long c = seat(concertId);
+            long u1 = 100 + round * 2L;
+            long u2 = u1 + 1;
+            String t1 = admit(concertId, u1, 60_000);
+            String t2 = admit(concertId, u2, 60_000);
+
+            List<String> results = together(2, List.<Callable<String>>of(
+                    () -> tryHold(concertId, u1, t1, List.of(a, b)), () -> tryHold(concertId, u2, t2, List.of(c, b))));
+
+            assertThat(results).containsExactlyInAnyOrder("HELD", "SEAT_TAKEN");
+            String winnerFree = results.get(0).equals("HELD") ? seatStatus(c) : seatStatus(a);
+            assertThat(seatStatus(b)).isEqualTo("HELD");
+            assertThat(winnerFree).isEqualTo("AVAILABLE");   // 진 쪽이 먼저 잡았던 좌석도 롤백
+        }
+    }
+
+    /** 1인 N매 결제 — 금액은 좌석 가격의 합 · 승인되면 좌석 전부 SOLD */
+    @Test
+    void multiSeatBookingSellsAllSeats() {
+        long concertId = concert("flow-multi");
+        long a = seat(concertId);
+        long b = seat(concertId);
+        BookingCreated held = service.create(concertId, 71L, admit(concertId, 71L, 60_000), List.of(b, a));
+
+        assertThat(held.amount()).isEqualTo(110000);
+        assertThat(service.pay(71L, held.bookingId(), "pk-71", 110000, null).status()).isEqualTo("CONFIRMED");
+        assertThat(seatStatus(a)).isEqualTo("SOLD");
+        assertThat(seatStatus(b)).isEqualTo("SOLD");
+        assertThat(service.get(71L, held.bookingId()).seats()).extracting(s -> s.floor() + "-" + s.section()).containsOnly("1F-A");
+    }
+
+    /** 1인 N매 한도 — 공연의 max_seats_per_user(4)를 넘으면 409 · 예매가 남지 않음 */
+    @Test
+    void seatLimitIsPerConcert() {
+        long concertId = concert("flow-limit");
+        List<Long> five = List.of(seat(concertId), seat(concertId), seat(concertId), seat(concertId), seat(concertId));
+
+        assertThat(tryHold(concertId, 72L, admit(concertId, 72L, 60_000), five)).isEqualTo("SEAT_LIMIT_EXCEEDED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM booking WHERE concert_id = ?", Long.class, concertId)).isZero();
+    }
+
     /** ④ 마감이 지난 HELD 는 정리(30초)를 기다리지 않고 바로 다음 사람이 선점 — 늦게 돈 정리가 돌아도 새 선점은 그대로 */
     @Test
     void expiredHoldIsTakenBeforeCleanup() {
         long concertId = concert("flow-expired");
-        long seatId = seat(concertId, "1");
-        BookingCreated first = service.create(concertId, 21L, admit(concertId, 21L, 60_000), seatId);
+        long seatId = seat(concertId);
+        BookingCreated first = service.create(concertId, 21L, admit(concertId, 21L, 60_000), List.of(seatId));
         deadline(first.bookingId(), "-1 second");
 
-        BookingCreated next = service.create(concertId, 22L, admit(concertId, 22L, 60_000), seatId);
+        BookingCreated next = service.create(concertId, 22L, admit(concertId, 22L, 60_000), List.of(seatId));
 
         assertThat(seatBooking(seatId)).isEqualTo(next.bookingId());
         assertThatThrownBy(() -> service.pay(21L, first.bookingId(), "pk-21", 55000, null))
@@ -197,8 +248,8 @@ class SeatHoldFlowTest {
     @Test
     void payingSeatSurvivesDeadline() {
         long concertId = concert("flow-paying");
-        long seatId = seat(concertId, "1");
-        BookingCreated held = service.create(concertId, 31L, admit(concertId, 31L, 60_000), seatId);
+        long seatId = seat(concertId);
+        BookingCreated held = service.create(concertId, 31L, admit(concertId, 31L, 60_000), List.of(seatId));
         String otherToken = admit(concertId, 32L, 60_000);
         deadline(held.bookingId(), "1 second");
         AtomicReference<String> during = new AtomicReference<>();
@@ -224,8 +275,8 @@ class SeatHoldFlowTest {
     @Test
     void payAfterDeadlineNeverReachesToss() {
         long concertId = concert("flow-late");
-        long seatId = seat(concertId, "1");
-        BookingCreated held = service.create(concertId, 35L, admit(concertId, 35L, 60_000), seatId);
+        long seatId = seat(concertId);
+        BookingCreated held = service.create(concertId, 35L, admit(concertId, 35L, 60_000), List.of(seatId));
         deadline(held.bookingId(), "-1 second");
 
         assertThatThrownBy(() -> service.pay(35L, held.bookingId(), "pk-35", 55000, null))
@@ -242,8 +293,8 @@ class SeatHoldFlowTest {
     @Test
     void doublePayIsSeatLockedNotExpired() throws Exception {
         long concertId = concert("flow-double");
-        long seatId = seat(concertId, "1");
-        BookingCreated held = service.create(concertId, 36L, admit(concertId, 36L, 60_000), seatId);
+        long seatId = seat(concertId);
+        BookingCreated held = service.create(concertId, 36L, admit(concertId, 36L, 60_000), List.of(seatId));
         payment.onConfirm = id -> {
             try {
                 Thread.sleep(500);                                       // 토스 승인을 기다리는 동안 두 번째 요청이 도착
@@ -265,10 +316,10 @@ class SeatHoldFlowTest {
     @Test
     void unknownPaymentIsSettledByCleanup() {
         long concertId = concert("flow-timeout");
-        long seatPaid = seat(concertId, "1");
-        long seatLost = seat(concertId, "2");
-        BookingCreated paid = service.create(concertId, 41L, admit(concertId, 41L, 60_000), seatPaid);
-        BookingCreated lost = service.create(concertId, 42L, admit(concertId, 42L, 60_000), seatLost);
+        long seatPaid = seat(concertId);
+        long seatLost = seat(concertId);
+        BookingCreated paid = service.create(concertId, 41L, admit(concertId, 41L, 60_000), List.of(seatPaid));
+        BookingCreated lost = service.create(concertId, 42L, admit(concertId, 42L, 60_000), List.of(seatLost));
         payment.onConfirm = id -> {
             throw new PaymentClient.Unavailable("confirm", new SocketTimeoutException("Read timed out"));
         };
@@ -303,11 +354,11 @@ class SeatHoldFlowTest {
     @Test
     void holdJustBeforeTokenExpiryCanStillPay() throws Exception {
         long concertId = concert("flow-token-edge");
-        long seatId = seat(concertId, "1");
+        long seatId = seat(concertId);
         String token = admit(concertId, 51L, 2_000);
         Thread.sleep(1_000);                                                               // 토큰이 1초 남음
 
-        BookingCreated held = service.create(concertId, 51L, token, seatId);
+        BookingCreated held = service.create(concertId, 51L, token, List.of(seatId));
         assertThat(held.expiresIn()).isBetween(0L, 2L);
         assertThat(jdbc.queryForObject("SELECT EXTRACT(EPOCH FROM hold_expires_at - now()) FROM booking WHERE id = ?",
                 Double.class, held.bookingId())).isBetween(175.0, 181.0);
@@ -321,11 +372,11 @@ class SeatHoldFlowTest {
     @Test
     void holdAfterTokenExpiryIsForbidden() throws Exception {
         long concertId = concert("flow-token-gone");
-        long seatId = seat(concertId, "1");
+        long seatId = seat(concertId);
         String token = admit(concertId, 61L, 200);
         awaitTokenGone(concertId, 61L);
 
-        assertThatThrownBy(() -> service.create(concertId, 61L, token, seatId))
+        assertThatThrownBy(() -> service.create(concertId, 61L, token, List.of(seatId)))
                 .isInstanceOfSatisfying(GeneralException.class, e -> {
                     assertThat(e.getErrorCode().getCode()).isEqualTo("QUEUE_NOT_ADMITTED");
                     assertThat(e.getErrorCode().getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
@@ -360,8 +411,12 @@ class SeatHoldFlowTest {
     }
 
     private String tryHold(long concertId, long userId, String token, long seatId) {
+        return tryHold(concertId, userId, token, List.of(seatId));
+    }
+
+    private String tryHold(long concertId, long userId, String token, List<Long> seatIds) {
         try {
-            service.create(concertId, userId, token, seatId);
+            service.create(concertId, userId, token, seatIds);
             return "HELD";
         } catch (GeneralException e) {
             return e.getErrorCode().getCode();
@@ -412,15 +467,15 @@ class SeatHoldFlowTest {
     /** 선점 서버 마감을 DB now() 기준으로 옮김 (예매 · 좌석 둘 다) — 예: "-1 second" = 1초 전에 지남 */
     private void deadline(long bookingId, String fromNow) {
         jdbc.update("UPDATE booking SET hold_expires_at = now() + ?::interval WHERE id = ?", fromNow, bookingId);
-        jdbc.update("UPDATE seat SET hold_expires_at = now() + ?::interval WHERE booking_id = ?", fromNow, bookingId);
+        jdbc.update("UPDATE concert_seat SET hold_expires_at = now() + ?::interval WHERE booking_id = ?", fromNow, bookingId);
     }
 
     private String seatStatus(long seatId) {
-        return jdbc.queryForObject("SELECT status FROM seat WHERE id = ?", String.class, seatId);
+        return jdbc.queryForObject("SELECT status FROM concert_seat WHERE id = ?", String.class, seatId);
     }
 
     private Long seatBooking(long seatId) {
-        return jdbc.queryForObject("SELECT booking_id FROM seat WHERE id = ?", Long.class, seatId);
+        return jdbc.queryForObject("SELECT booking_id FROM concert_seat WHERE id = ?", Long.class, seatId);
     }
 
     private boolean paying(long bookingId) {
@@ -431,24 +486,41 @@ class SeatHoldFlowTest {
         return jdbc.queryForObject("SELECT status FROM booking WHERE id = ?", String.class, bookingId);
     }
 
-    /** 대기열을 켠 · 판매 중인 공연 */
-    private long concert(String key) {
-        Long venueId = jdbc.queryForObject("""
-                INSERT INTO venue (name, region) VALUES (?, 'SEOUL')
-                ON CONFLICT (name) DO UPDATE SET region = EXCLUDED.region RETURNING id
-                """, Long.class, "롤링홀");
+    /** 대기열을 켠 · 판매 중인 공연 (1인 4매) */
+    private long concert(String title) {
         return jdbc.queryForObject("""
-                INSERT INTO concert (artist_id, artist_name, venue_id, title, type, starts_at, booking_open_at,
-                                     queue_enabled, source, external_id, updated_at)
-                VALUES (7, '새소년', ?, '단독공연', 'SOLO', now() + interval '30 days', now() - interval '1 hour',
-                        TRUE, 'test', ?, now()) RETURNING id
-                """, Long.class, venueId, key);
+                INSERT INTO concert (venue_id, title, type, starts_at, booking_open_at, queue_enabled, max_seats_per_user, updated_at)
+                VALUES (?, ?, 'SOLO', now() + interval '30 days', now() - interval '1 hour', TRUE, 4, now()) RETURNING id
+                """, Long.class, venue(), title);
     }
 
-    private long seat(long concertId, String rowNo) {
+    /** 이 공연의 판매 좌석 하나 (55,000원) — 공연장 배치에 좌석을 하나 만들고 그 좌석을 팝니다 */
+    private long seat(long concertId) {
+        Long seatId = jdbc.queryForObject("""
+                INSERT INTO seat (section_id, row_no, seat_no, x, y, angle) VALUES (?, 1, ?, 0.5, 0.5, 0) RETURNING id
+                """, Long.class, section(), SEAT_NO.incrementAndGet());
         return jdbc.queryForObject("""
-                INSERT INTO seat (concert_id, section, row_no, seat_no, price, status)
-                VALUES (?, 'A', ?, 1, 55000, 'AVAILABLE') RETURNING id
-                """, Long.class, concertId, rowNo);
+                INSERT INTO concert_seat (concert_id, seat_id, price, status) VALUES (?, ?, 55000, 'AVAILABLE') RETURNING id
+                """, Long.class, concertId, seatId);
+    }
+
+    private static final AtomicInteger SEAT_NO = new AtomicInteger();
+
+    private long venue() {
+        return jdbc.queryForObject("""
+                INSERT INTO venue (name, region) VALUES ('롤링홀', 'SEOUL')
+                ON CONFLICT (name) DO UPDATE SET region = EXCLUDED.region RETURNING id
+                """, Long.class);
+    }
+
+    private long section() {
+        Long floorId = jdbc.queryForObject("""
+                INSERT INTO floor (venue_id, name) VALUES (?, '1F')
+                ON CONFLICT (venue_id, name) DO UPDATE SET name = EXCLUDED.name RETURNING id
+                """, Long.class, venue());
+        return jdbc.queryForObject("""
+                INSERT INTO section (floor_id, name, shape, angle) VALUES (?, 'A', '[[0,0],[1,0],[1,1]]', 0)
+                ON CONFLICT (floor_id, name) DO UPDATE SET name = EXCLUDED.name RETURNING id
+                """, Long.class, floorId);
     }
 }

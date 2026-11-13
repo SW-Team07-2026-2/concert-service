@@ -41,7 +41,7 @@ import java.util.concurrent.TimeUnit;
  * 스냅샷        5초 · 증분 배치        Redis → queue_entry
  * 복구          센티넬이 없으면        queue_entry → ZADD (순서 그대로) + 입장 토큰 (남은 시간만큼) · 다른 replica 가 복구 중이면 DB COUNT 로 degraded
  * </pre>
- * 입장 토큰 검사(requireEntry)도 여기 있습니다 — 좌석 선점(N10)만 부릅니다. 결제(N16)는 선점만 봅니다 (Gateway 는 관여하지 않음).
+ * 입장 토큰 검사(requireEntry · entryLeft)도 여기 있습니다 — 좌석 선점과 좌석 화면 타이머가 부릅니다. 결제(N16)는 선점만 봅니다 (Gateway 는 관여하지 않음).
  */
 @Service
 public class QueueService {
@@ -145,9 +145,17 @@ public class QueueService {
             return OptionalLong.empty();
         }
         if (entryToken == null || entryToken.isBlank()) throw entryRequired();
+        return OptionalLong.of(entryLeft(concert.getId(), userId, entryToken));
+    }
+
+    /**
+     * 입장 토큰 남은 초 (Redis TTL) — 좌석 화면 타이머 · 좌석 선점이 씁니다. DB 를 거치지 않습니다.
+     * 입장 기록이 없거나 만료면 QUEUE_NOT_ADMITTED · 토큰이 다르면 ENTRY_TOKEN_INVALID
+     */
+    public long entryLeft(long concertId, long userId, String entryToken) {
         Optional<QueueStore.Entry> entry;
         try {
-            entry = store.entry(concert.getId(), userId);
+            entry = store.entry(concertId, userId);
         } catch (QueueStore.Unavailable e) {
             throw unavailable();
         }
@@ -156,7 +164,7 @@ public class QueueService {
                 entryToken.strip().getBytes(StandardCharsets.UTF_8))) {
             throw new GeneralException(QueueErrorCode.ENTRY_TOKEN_INVALID);
         }
-        return OptionalLong.of(entry.get().ttlSeconds());
+        return entry.get().ttlSeconds();
     }
 
     /** 입장 처리 (1초) — 리더만. 센티넬이 없으면 여기서도 복구합니다 (아무도 폴링하지 않아도 복구되게) */
