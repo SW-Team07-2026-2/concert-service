@@ -1,6 +1,10 @@
 package com.indie.concert;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.indie.concert.domain.seat.entity.ConcertSeatEntity;
+import com.indie.concert.domain.layout.dto.response.VenueLayout;
+import com.indie.concert.domain.concert.dto.request.ConcertUpdateRequest;
+import com.indie.concert.domain.concert.entity.Genre;
 import com.indie.concert.domain.booking.entity.BookingEntity;
 import com.indie.concert.domain.booking.repository.BookingRepository;
 import com.indie.concert.domain.concert.dto.event.ConcertEvents;
@@ -65,8 +69,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.groups.Tuple.tuple;
 
 /**
- * 운영 경로 검증 — 로컬은 ddl-auto: update 라 Flyway V1 이 한 번도 돌지 않습니다.
- * 여기서 Flyway 로 스키마를 만들고 ddl-auto: validate 로 엔티티와 대조합니다 (어긋나면 컨텍스트 기동 실패).
+ * 스키마 검증 — Flyway(V1 구조 · V2 값)로 스키마를 만들고 ddl-auto: validate 로 엔티티와 대조합니다 (어긋나면 컨텍스트 기동 실패).
  * 1인 1예매 · 검표처럼 DB 가 최종 보장하는 규칙도 실제 PostgreSQL 에서 확인합니다 (좌석 선점 흐름은 SeatHoldFlowTest). Docker 가 없으면 건너뜁니다.
  */
 @Testcontainers(disabledWithoutDocker = true)
@@ -109,7 +112,7 @@ class ConcertSchemaTest {
     @Autowired TransactionTemplate tx;
     @Autowired OutboxAppender outbox;
 
-    /** 선점 저장 (V8) — 좌석의 마감은 예매의 서버 마감(DB now() + 9분)을 그대로 씁니다 */
+    /** 선점 저장 — 좌석의 마감은 예매의 서버 마감(DB now() + 9분)을 그대로 씁니다 */
     @Test
     void holdCopiesServerDeadlineToSeat() {
         long concertId = concert("hold");
@@ -273,6 +276,28 @@ class ConcertSchemaTest {
                 BigDecimal.class, first.sectionId())).isEqualByComparingTo("0.23");
     }
 
+    /** 관리자 화면용 배치 조회 — 층 → 구역(모양) → 좌석(seat.id · 위치), 배치가 없는 공연장은 빈 목록 */
+    @Test
+    void venueLayoutIsReadBack() {
+        long venueId = venue("조회홀");
+        var a = layoutService.saveSection(venueId, layout(venueId, "1F", "A", 12.5, 2, 3));
+        layoutService.saveSection(venueId, layout(venueId, "2F", "B", 0, 1, 1));
+
+        VenueLayout layout = layoutService.layout(venueId);
+
+        assertThat(layout.floors()).extracting(VenueLayout.Floor::name).containsExactly("1F", "2F");
+        VenueLayout.Section section = layout.floors().get(0).sections().get(0);
+        assertThat(section.id()).isEqualTo(a.sectionId());
+        assertThat(section.shape()).hasSize(4);
+        assertThat(section.angle()).isEqualByComparingTo("12.5");
+        assertThat(section.seats()).extracting(VenueLayout.Seat::row, VenueLayout.Seat::number)
+                .containsExactly(tuple(1, 1), tuple(1, 2), tuple(1, 3), tuple(2, 1), tuple(2, 2), tuple(2, 3));
+        assertThat(section.seats()).extracting(VenueLayout.Seat::id).containsExactlyElementsOf(
+                jdbc.queryForList("SELECT id FROM seat WHERE section_id = ? ORDER BY row_no, seat_no", Long.class, a.sectionId()));
+        assertThat(layoutService.layout(venue("빈홀")).floors()).isEmpty();
+        assertThatThrownBy(() -> layoutService.layout(999_999L)).isInstanceOf(GeneralException.class);
+    }
+
     /** 이 구역 좌석을 파는 공연이 있으면 409 — 모양 · 좌석 모두 그대로 (롤백) */
     @Test
     void sectionInUseCannotBeRedrawn() {
@@ -343,7 +368,17 @@ class ConcertSchemaTest {
 
         ConcertDetail detail = admin.create(festival(venueId, "펜타포트", List.of(a2, a1)));
 
-        assertThat(detail.genre()).isEqualTo("ROCK");
+        assertThat(detail.genre()).isEqualTo("ALTERNATIVE");
+        assertThat(detail.description()).isEqualTo("상세 **소개**");
+        assertThat(detail.terms()).isNull();                                                   // 빈 문자열은 없음으로
+        assertThat(detail.requirements()).isEqualTo("만 19세 이상 · 신분증 지참");
+        assertThat(detail.posterUrl()).isEqualTo("https://img/poster.jpg");
+        assertThat(detail.imageUrls()).containsExactly("https://img/1.jpg", "https://img/2.jpg");
+        ConcertDetail edited = admin.update(detail.id(), new ConcertUpdateRequest(null, null, null, null, null, null, null, null, null,
+                null, "예매 약관", null, null, List.of("https://img/3.jpg")));
+        assertThat(edited.terms()).isEqualTo("예매 약관");
+        assertThat(edited.description()).isEqualTo("상세 **소개**");                              // 안 보낸 값은 그대로
+        assertThat(edited.imageUrls()).containsExactly("https://img/3.jpg");                     // 보내면 목록 전체 교체
         assertThat(detail.artists()).extracting(ArtistRef::id).containsExactly(a2, a1);
         assertThat(detail.maxSeatsPerUser()).isEqualTo(4);
         assertThat(lastEvent("concert.created").get("artistIds").toString()).isEqualTo("[" + a2 + "," + a1 + "]");
@@ -380,18 +415,22 @@ class ConcertSchemaTest {
         long a = artist(121, "새소년", "INDIE_ROCK");
         long venueId = venue("단독홀");
         ConcertDetail solo = admin.create(new ConcertCreateRequest(venueId, "단독공연", ConcertEntity.Type.SOLO, null,
-                OffsetDateTime.now().plusDays(30), null, 55000, null, null, 2, List.of(a), null, null));
+                OffsetDateTime.now().plusDays(30), null, 55000, null, null, 2, List.of(a), null, null, null, null, null, null, null));
         long fest = admin.create(festival(venueId, "같이 나오는 페스티벌", List.of(a))).id();
         assertThat(solo.genre()).isEqualTo("INDIE_ROCK");
-        assertThatThrownBy(() -> admin.create(new ConcertCreateRequest(venueId, "장르 지정", ConcertEntity.Type.SOLO, "ROCK",
-                OffsetDateTime.now().plusDays(30), null, null, null, null, 2, List.of(a), null, null)))
+        assertThatThrownBy(() -> admin.create(new ConcertCreateRequest(venueId, "장르 지정", ConcertEntity.Type.SOLO, Genre.ALTERNATIVE,
+                OffsetDateTime.now().plusDays(30), null, null, null, null, 2, List.of(a), null, null, null, null, null, null, null)))
                 .isInstanceOfSatisfying(GeneralException.class, e -> assertThat(e.getErrorCode().getCode()).isEqualTo("INVALID_REQUEST"));
 
         artistService.apply(a, "새소년", "PSYCHEDELIC", OffsetDateTime.now());
         artistService.apply(a, "새소년", "JAZZ", OffsetDateTime.now().minusDays(1));   // 늦게 온 옛 이벤트
 
         assertThat(genre(solo.id())).isEqualTo("PSYCHEDELIC");
-        assertThat(genre(fest)).isEqualTo("ROCK");
+        assertThat(genre(fest)).isEqualTo("ALTERNATIVE");
+
+        artistService.apply(a, "새소년", "K_ROCK", OffsetDateTime.now().plusSeconds(1));   // Catalog 목록에 없는 값 — 복제는 계속, 장르 없음
+        assertThat(jdbc.queryForObject("SELECT genre FROM artist WHERE id = ?", String.class, a)).isNull();
+        assertThat(genre(solo.id())).isNull();
     }
 
     /** 복제가 안 된 아티스트 · 같은 아티스트 두 번 · 단독 공연 2명은 400 */
@@ -404,8 +443,41 @@ class ConcertSchemaTest {
                 .isInstanceOfSatisfying(GeneralException.class, e -> assertThat(e.getData()).containsKey("artistIds"));
         assertThatThrownBy(() -> admin.create(festival(venueId, "중복", List.of(a, a)))).isInstanceOf(GeneralException.class);
         assertThatThrownBy(() -> admin.create(new ConcertCreateRequest(venueId, "둘", ConcertEntity.Type.SOLO, null,
-                OffsetDateTime.now().plusDays(30), null, null, null, null, 2, List.of(a, artist(132, "다른", null)), null, null)))
+                OffsetDateTime.now().plusDays(30), null, null, null, null, 2, List.of(a, artist(132, "다른", null)), null, null, null, null, null, null, null)))
                 .isInstanceOf(GeneralException.class);
+    }
+
+    /** 마이그레이션은 V1(구조) · V2(값) 두 파일 */
+    @Test
+    void migrationsAreSchemaThenValues() {
+        assertThat(jdbc.queryForList("SELECT version || ' ' || description FROM flyway_schema_history "
+                + "WHERE success AND version IS NOT NULL ORDER BY installed_rank", String.class))
+                .containsExactly("1 concert schema", "2 concert values");
+    }
+
+    /** ★ V2 의 CHECK 값 목록 = Java enum — 한쪽만 고치면 여기서 깨집니다 (장르는 Catalog 의 Genre 와 같은 목록) */
+    @Test
+    void checkConstraintValuesMatchJavaEnums() {
+        assertThat(checkValues("ck_artist_genre")).isEqualTo(names(Genre.values()));
+        assertThat(checkValues("ck_concert_genre")).isEqualTo(names(Genre.values()));
+        assertThat(checkValues("ck_venue_region")).isEqualTo(names(Region.values()));
+        assertThat(checkValues("ck_concert_type")).isEqualTo(names(ConcertEntity.Type.values()));
+        assertThat(checkValues("ck_booking_status")).isEqualTo(names(BookingEntity.Status.values()));
+        assertThat(checkValues("ck_concert_seat_status")).isEqualTo(names(ConcertSeatEntity.Status.values()));
+        assertThat(checkValues("ck_queue_entry_status")).isEqualTo(names(QueueEntryEntity.Status.values()));
+        assertThat(Genre.values()).hasSize(23);
+    }
+
+    private static java.util.Set<String> names(Enum<?>[] values) {
+        return new java.util.TreeSet<>(java.util.Arrays.stream(values).map(Enum::name).toList());
+    }
+
+    private java.util.Set<String> checkValues(String constraint) {
+        String def = jdbc.queryForObject("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = ?", String.class, constraint);
+        java.util.Set<String> values = new java.util.TreeSet<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("'([A-Z0-9_]+)'").matcher(def);
+        while (m.find()) values.add(m.group(1));
+        return values;
     }
 
     /** Postgres 는 FK 를 걸어도 참조하는 쪽 인덱스를 만들지 않습니다 — 직접 만든 것 확인 */
@@ -496,8 +568,9 @@ class ConcertSchemaTest {
 
     private static ConcertCreateRequest festival(long venueId, String title, List<Long> artistIds) {
         OffsetDateTime starts = OffsetDateTime.now().plusDays(40);
-        return new ConcertCreateRequest(venueId, title, ConcertEntity.Type.FESTIVAL, "ROCK", starts, starts.plusHours(8),
-                99000, starts.minusDays(20), true, 4, artistIds, null, null);
+        return new ConcertCreateRequest(venueId, title, ConcertEntity.Type.FESTIVAL, Genre.ALTERNATIVE, starts, starts.plusHours(8),
+                99000, starts.minusDays(20), true, 4, artistIds, null, null, "상세 **소개**", " ", "만 19세 이상 · 신분증 지참",
+                "https://img/poster.jpg", List.of("https://img/1.jpg", "https://img/2.jpg"));
     }
 
     private String genre(long concertId) {

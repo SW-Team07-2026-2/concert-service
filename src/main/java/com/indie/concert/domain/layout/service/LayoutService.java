@@ -1,11 +1,13 @@
 package com.indie.concert.domain.layout.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indie.concert.domain.concert.repository.VenueRepository;
 import com.indie.concert.domain.layout.dto.request.SeatPoint;
 import com.indie.concert.domain.layout.dto.request.SectionLayoutRequest;
 import com.indie.concert.domain.layout.dto.response.SectionSaved;
+import com.indie.concert.domain.layout.dto.response.VenueLayout;
 import com.indie.concert.domain.layout.exception.LayoutErrorCode;
 import com.indie.concert.domain.layout.repository.LayoutRepository;
 import com.indie.concert.global.common.exception.CommonErrorCode;
@@ -16,8 +18,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -38,6 +44,34 @@ public class LayoutService {
         this.venueRepository = venueRepository;
         this.layoutRepository = layoutRepository;
         this.objectMapper = objectMapper;
+    }
+
+    /** 저장된 배치 — 층 · 구역 · 좌석 (쿼리 2번 — 구역 모양을 좌석마다 싣지 않게). 배치가 아직 없으면 floors 가 빈 목록 */
+    @Transactional(readOnly = true)
+    public VenueLayout layout(long venueId) {
+        venueRepository.findById(venueId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
+        Map<Long, List<VenueLayout.Seat>> bySection = new HashMap<>();
+        for (LayoutRepository.SeatRow s : layoutRepository.findSeats(venueId)) {
+            bySection.computeIfAbsent(s.getSectionId(), id -> new ArrayList<>())
+                    .add(new VenueLayout.Seat(s.getId(), s.getRowNo(), s.getSeatNo(), s.getX(), s.getY(), s.getAngle()));
+        }
+        Map<Long, String> floorNames = new LinkedHashMap<>();
+        Map<Long, List<VenueLayout.Section>> byFloor = new HashMap<>();
+        for (LayoutRepository.SectionRow r : layoutRepository.findSections(venueId)) {
+            floorNames.putIfAbsent(r.getFloorId(), r.getFloorName());
+            byFloor.computeIfAbsent(r.getFloorId(), id -> new ArrayList<>()).add(new VenueLayout.Section(r.getId(), r.getName(),
+                    shape(r.getShape()), r.getAngle(), bySection.getOrDefault(r.getId(), List.of())));
+        }
+        return new VenueLayout(venueId, floorNames.entrySet().stream()
+                .map(f -> new VenueLayout.Floor(f.getKey(), f.getValue(), byFloor.get(f.getKey()))).toList());
+    }
+
+    private List<List<BigDecimal>> shape(String json) {
+        try {
+            return objectMapper.readValue(json, new TypeReference<>() {});
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("section.shape 가 꼭짓점 목록이 아닙니다", e);   // 저장 때 검증하므로 생기지 않습니다
+        }
     }
 
     @Transactional

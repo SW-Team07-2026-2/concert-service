@@ -8,6 +8,7 @@ import com.indie.concert.domain.concert.dto.response.ConcertSummary;
 import com.indie.concert.domain.concert.dto.response.VenueRef;
 import com.indie.concert.domain.concert.dto.response.VenueView;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
+import com.indie.concert.domain.concert.entity.Genre;
 import com.indie.concert.domain.concert.entity.Region;
 import com.indie.concert.domain.concert.entity.VenueEntity;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
@@ -60,14 +61,14 @@ public class ConcertService {
 
     /** N1 — from 이 없으면 지금 이후 (지난 공연 제외). to 는 그날까지 포함 */
     @Transactional(readOnly = true)
-    public PageResult<ConcertSummary> list(LocalDate from, LocalDate to, Region region, String genre,
+    public PageResult<ConcertSummary> list(LocalDate from, LocalDate to, Region region, Genre genre,
                                            ConcertEntity.Type type, Long artistId, int page, int size) {
         OffsetDateTime start = from == null ? OffsetDateTime.now(clock) : startOfDay(from);
         OffsetDateTime end = to == null ? null : startOfDay(to.plusDays(1));
         if (end != null && !end.isAfter(start)) {
             throw new GeneralException(CommonErrorCode.INVALID_REQUEST, "to 는 from 이후여야 합니다");
         }
-        var filter = new ConcertRepository.Filter(start, end, region, genre == null ? null : genre.strip(), type, artistId);
+        var filter = new ConcertRepository.Filter(start, end, region, genre == null ? null : genre.name(), type, artistId);
         return PageResult.of(concertRepository.search(filter, PageRequest.of(page, size, BY_START)), this::summaries);
     }
 
@@ -79,7 +80,8 @@ public class ConcertService {
         return new ConcertDetail(c.getId(), c.getTitle(), c.getType().name(), c.getGenre(), lineupReader.of(c.getId()),
                 c.getStartsAt(), c.getEndsAt(), c.getPrice(), c.saleStatus(OffsetDateTime.now(clock)).name(),
                 c.getBookingOpenAt(), c.isQueueEnabled(), c.getMaxSeatsPerUser(),
-                new VenueView(v.getId(), v.getName(), v.getRegion().name(), v.getAddress(), v.getCapacity()));
+                new VenueView(v.getId(), v.getName(), v.getRegion().name(), v.getAddress(), v.getCapacity()),
+                c.getDescription(), c.getTerms(), c.getRequirements(), c.getPosterUrl(), c.getImageUrls());
     }
 
     /** N3 — 월 단위 · 날짜별 묶음. 팔로우 기준 보기는 프론트가 팔로우 목록을 artistIds 로 넘깁니다 (08 §7) */

@@ -150,6 +150,32 @@ class BookingServiceTest {
         verify(payment, never()).cancel(anyLong(), anyString(), anyBoolean());
     }
 
+    /** 관리자 취소 대행 — 회원 본인 취소와 같은 규칙 (공연 24시간 전 마감) · 통과하면 사유만 ADMIN_CANCEL */
+    @Test
+    void adminCancelFollowsSameRules() {
+        BookingEntity late = mock(BookingEntity.class);
+        when(late.getStatus()).thenReturn(BookingEntity.Status.CONFIRMED);
+        when(late.getConcertId()).thenReturn(1L);
+        ConcertEntity soon = mock(ConcertEntity.class);
+        when(soon.getStartsAt()).thenReturn(NOW_AT.plusHours(23));
+        when(bookings.findById(9L)).thenReturn(Optional.of(late));
+        when(concerts.findById(1L)).thenReturn(Optional.of(soon));
+
+        assertThatThrownBy(() -> service.cancelByAdmin(9L))
+                .isInstanceOf(GeneralException.class)
+                .extracting(e -> ((GeneralException) e).getErrorCode().getCode()).isEqualTo("BOOKING_NOT_CANCELLABLE");
+        verify(payment, never()).cancel(anyLong(), anyString(), anyBoolean());
+
+        payable(8L, 77L, NOW_AT.plusMinutes(9));                                 // 결제 전 예매 (회원 3)
+        ConcertEntity concert = concert();
+        VenueEntity venue = mock(VenueEntity.class);
+        when(concerts.findById(anyLong())).thenReturn(Optional.of(concert));
+        when(venues.findById(anyLong())).thenReturn(Optional.of(venue));
+        service.cancelByAdmin(8L);
+        verify(payment).cancel(8L, "ADMIN_CANCEL", true);
+        assertThatThrownBy(() -> service.cancelByAdmin(404L)).isInstanceOf(GeneralException.class);
+    }
+
     /** 입장한 예매는 환불 없음 — 취소 마감을 줄이는 설정 변경에도 */
     @Test
     void checkedInBookingIsNotCancellable() {

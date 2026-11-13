@@ -223,7 +223,19 @@ public class BookingService {
 
     /** N13 — 결제 전이면 무효화(선택 취소), 확정이면 공연 24시간 전까지 환불 (FR-CON-14). Payment 를 먼저 취소하고 좌석을 돌려놓습니다 */
     public BookingDetail cancel(long userId, long bookingId) {
-        BookingEntity b = bookingRepository.findByIdAndUserId(bookingId, userId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
+        cancel(bookingRepository.findByIdAndUserId(bookingId, userId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND)),
+                bookingId, "USER_CANCEL");
+        return get(userId, bookingId);
+    }
+
+    /** 관리자(Studio CS)의 취소 대행 — 회원 본인의 취소(N13)와 같은 규칙이고 Payment 에 남는 사유만 다릅니다 */
+    public BookingDetail cancelByAdmin(long bookingId) {
+        BookingEntity b = bookingRepository.findById(bookingId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
+        cancel(b, bookingId, "ADMIN_CANCEL");
+        return get(b.getUserId(), bookingId);
+    }
+
+    private void cancel(BookingEntity b, long bookingId, String reason) {
         switch (b.getStatus()) {
             case CANCELLED, EXPIRED -> throw notCancellable("이미 취소된 예매입니다");
             case CONFIRMED -> {
@@ -235,9 +247,8 @@ public class BookingService {
             }
             case PENDING -> { }
         }
-        cancelPayment(bookingId, "USER_CANCEL", true);
+        cancelPayment(bookingId, reason, true);
         release(bookingId, false);
-        return get(userId, bookingId);
     }
 
     /** payment.completed — 중복 이벤트면 0행 */
