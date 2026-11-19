@@ -31,7 +31,7 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
     @Override
     default Slice<ConcertEntity> search(Filter f, Pageable pageable) {
         return findAll(Specification.where(startsFrom(f.from())).and(startsBefore(f.to())).and(inRegion(f.regions()))
-                .and(in("genre", f.genres())).and(in("type", f.types())).and(withArtists(f.artistIds()))
+                .and(genreIn(f.genres())).and(in("type", f.types())).and(withArtists(f.artistIds()))
                 .and(titleArtistOrVenue(f.q())).and(saleStatusIn(f.saleStatuses(), f.now()))
                 .and(f.sort() == ListSort.ARTIST_ORDER ? byArtistOrder(f.artistIds()) : null), pageable);
     }
@@ -107,8 +107,24 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
         return (root, query, cb) -> root.get(attribute).in(values);
     }
 
-    /** 공연 제목 또는 라인업 아티스트 이름 부분 일치 (대소문자 무시 · 검색어의 % _ 는 글자 그대로) */
-    /** 11/19 검색어 LIKE — 공연 제목 · 라인업 아티스트 이름 · 공연장 이름 (프론트 요구 2-2) */
+    /**
+     * 11/19 장르 — 공연 장르이거나 라인업 아티스트 중 누군가의 대표 장르 (프론트 보완 기준 4장).
+     * 아티스트 복제본은 대표 장르(Catalog 장르 목록의 첫 번째)만 가지므로 두 번째 장르로는 걸리지 않습니다 (사용자 결정 · 스키마 그대로)
+     */
+    private static Specification<ConcertEntity> genreIn(Collection<String> genres) {
+        if (genres == null || genres.isEmpty()) return null;
+        return (root, query, cb) -> {
+            Subquery<Long> lineup = query.subquery(Long.class);
+            Root<ConcertArtistEntity> ca = lineup.from(ConcertArtistEntity.class);
+            Subquery<Long> artists = lineup.subquery(Long.class);
+            Root<ArtistEntity> a = artists.from(ArtistEntity.class);
+            artists.select(a.get("id")).where(a.get("genre").in(genres));
+            lineup.select(ca.get("concertId")).where(ca.get("artistId").in(artists));
+            return cb.or(root.get("genre").in(genres), root.get("id").in(lineup));
+        };
+    }
+
+    /** 검색어 LIKE (대소문자 무시 · 검색어의 % _ 는 글자 그대로) — 공연 제목 · 라인업 아티스트 이름 · 11/19 공연장 이름 (프론트 요구 2-2) */
     private static Specification<ConcertEntity> titleArtistOrVenue(String q) {
         if (q == null || q.isBlank()) return null;
         String pattern = "%" + q.strip().toLowerCase().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
