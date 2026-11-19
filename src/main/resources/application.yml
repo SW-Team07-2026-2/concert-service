@@ -86,7 +86,7 @@ app:
     connect-timeout-ms: 1000
     read-timeout-ms: 3000                     # 11 §4 — 동기 호출 타임아웃 3초
   member:                                     # 11/19 팔로우 탭 — /api/concerts/following 이 팔로우 목록을 받아 옴 (타임아웃 1초 / 3초)
-    base-url: ${MEMBER_BASE_URL:http://member:8081}
+    base-url: ${MEMBER_BASE_URL:http://member:8181}   # Member 팔로우 전용 포트 (8081 은 Gateway 전용)
   zone: Asia/Seoul                            # 캘린더 · 날짜 필터의 하루 경계
   booking:
     hold-minutes: 7                           # 11/09 화면 시계 = 대기열 통과부터 결제하기까지 7분 하나 · 좌석을 고르면(N10) 입장 토큰 남은 시간을 이어받음
