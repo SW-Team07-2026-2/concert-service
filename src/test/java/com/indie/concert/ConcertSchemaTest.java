@@ -411,7 +411,11 @@ class ConcertSchemaTest {
         assertThat(ids(null, null, null, List.of(ConcertEntity.SaleStatus.SCHEDULED, ConcertEntity.SaleStatus.ON_SALE), null, "필터 공연", null))
                 .containsExactly(onSale, scheduled);
         assertThat(ids(List.of(Region.BUSAN), null, null, null, null, "필터 공연", null)).containsExactly(scheduled);
-        assertThat(ids(null, List.of(Genre.INDIE_ROCK, Genre.FOLK), null, all, null, "필터 공연", null)).containsExactly(closed, onSale);
+        assertThat(ids(null, List.of(Genre.INDIE_ROCK, Genre.FOLK), null, all, null, "필터 공연", null))
+                .containsExactly(closed, onSale, scheduled);                                                  // 둘(EMO)은 라인업 다(FOLK)로
+        assertThat(ids(null, List.of(Genre.FOLK), null, all, null, "필터 공연", null)).containsExactly(closed, scheduled);
+        assertThat(ids(null, List.of(Genre.EMO), null, all, null, "필터 공연", null)).containsExactly(scheduled);   // 공연 장르 · 라인업 나(EMO)
+        assertThat(ids(null, List.of(Genre.PUNK), null, all, null, "필터 공연", null)).isEmpty();
         assertThat(ids(null, null, List.of(ConcertEntity.Type.FESTIVAL), null, null, "필터 공연", null)).containsExactly(scheduled);
         assertThat(ids(null, null, null, all, null, "필터밴드나", null)).containsExactly(scheduled);              // 라인업 이름
 
