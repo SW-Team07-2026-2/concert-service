@@ -1,9 +1,14 @@
 package com.indie.concert.domain.concert.repository;
 
+import com.indie.concert.domain.concert.entity.ArtistEntity;
 import com.indie.concert.domain.concert.entity.ConcertArtistEntity;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
 import com.indie.concert.domain.concert.entity.Region;
 import com.indie.concert.domain.concert.entity.VenueEntity;
+import com.indie.concert.global.common.util.ListSort;
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.Path;
+import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.Subquery;
 import org.springframework.data.domain.Pageable;
@@ -25,9 +30,10 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
 
     @Override
     default Slice<ConcertEntity> search(Filter f, Pageable pageable) {
-        return findAll(Specification.where(startsFrom(f.from())).and(startsBefore(f.to())).and(inRegion(f.region()))
-                .and(equalTo("genre", f.genre())).and(equalTo("type", f.type()))
-                .and(withArtists(f.artistId() == null ? null : List.of(f.artistId()))), pageable);
+        return findAll(Specification.where(startsFrom(f.from())).and(startsBefore(f.to())).and(inRegion(f.regions()))
+                .and(in("genre", f.genres())).and(in("type", f.types())).and(withArtists(f.artistIds()))
+                .and(titleOrArtist(f.q())).and(saleStatusIn(f.saleStatuses(), f.now()))
+                .and(f.sort() == ListSort.ARTIST_ORDER ? byArtistOrder(f.artistIds()) : null), pageable);
     }
 
     @Override
@@ -70,12 +76,12 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
         return (root, query, cb) -> cb.lessThan(root.get("startsAt"), to);
     }
 
-    private static Specification<ConcertEntity> inRegion(Region region) {
-        if (region == null) return null;
+    private static Specification<ConcertEntity> inRegion(Collection<Region> regions) {
+        if (regions == null || regions.isEmpty()) return null;
         return (root, query, cb) -> {
             Subquery<Long> venues = query.subquery(Long.class);
             Root<VenueEntity> v = venues.from(VenueEntity.class);
-            venues.select(v.get("id")).where(cb.equal(v.get("region"), region));
+            venues.select(v.get("id")).where(v.get("region").in(regions));
             return root.get("venueId").in(venues);
         };
     }
@@ -91,8 +97,57 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
         };
     }
 
-    private static Specification<ConcertEntity> equalTo(String attribute, Object value) {
-        if (value == null || value instanceof String s && s.isBlank()) return null;
-        return (root, query, cb) -> cb.equal(root.get(attribute), value);
+    private static Specification<ConcertEntity> in(String attribute, Collection<?> values) {
+        if (values == null || values.isEmpty()) return null;
+        return (root, query, cb) -> root.get(attribute).in(values);
+    }
+
+    /** 공연 제목 또는 라인업 아티스트 이름 부분 일치 (대소문자 무시 · 검색어의 % _ 는 글자 그대로) */
+    private static Specification<ConcertEntity> titleOrArtist(String q) {
+        if (q == null || q.isBlank()) return null;
+        String pattern = "%" + q.strip().toLowerCase().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+        return (root, query, cb) -> {
+            Subquery<Long> lineup = query.subquery(Long.class);
+            Root<ConcertArtistEntity> ca = lineup.from(ConcertArtistEntity.class);
+            Subquery<Long> named = lineup.subquery(Long.class);
+            Root<ArtistEntity> a = named.from(ArtistEntity.class);
+            named.select(a.get("id")).where(cb.like(cb.lower(a.get("name")), pattern, '\\'));
+            lineup.select(ca.get("concertId")).where(ca.get("artistId").in(named));
+            return cb.or(cb.like(cb.lower(root.get("title")), pattern, '\\'), root.get("id").in(lineup));
+        };
+    }
+
+    /** 진행 현황 — ConcertEntity.saleStatus(now) 와 같은 기준 (시작 이후 CLOSED · 오픈 전이나 미정 SCHEDULED · 그 사이 ON_SALE) */
+    private static Specification<ConcertEntity> saleStatusIn(Collection<ConcertEntity.SaleStatus> statuses, OffsetDateTime now) {
+        if (statuses == null || statuses.isEmpty()) return null;
+        return (root, query, cb) -> {
+            Path<OffsetDateTime> starts = root.get("startsAt");
+            Path<OffsetDateTime> opens = root.get("bookingOpenAt");
+            return cb.or(statuses.stream().map(s -> switch (s) {
+                case CLOSED -> cb.lessThanOrEqualTo(starts, now);
+                case SCHEDULED -> cb.and(cb.greaterThan(starts, now), cb.or(cb.isNull(opens), cb.greaterThan(opens, now)));
+                case ON_SALE -> cb.and(cb.greaterThan(starts, now), cb.lessThanOrEqualTo(opens, now));
+            }).toArray(Predicate[]::new));
+        };
+    }
+
+    /**
+     * 넘긴 아티스트 순서대로 — 공연마다 라인업 중 가장 앞 순서의 자리. 같으면 공연일 가까운 순.
+     * 정렬은 데이터 조회에만 겁니다 (페이지의 개수 조회는 결과 타입이 Long). pageable 은 정렬 없이 넘어와야 합니다
+     */
+    private static Specification<ConcertEntity> byArtistOrder(List<Long> artistIds) {
+        return (root, query, cb) -> {
+            if (!Long.class.equals(query.getResultType())) {
+                Subquery<Integer> rank = query.subquery(Integer.class);
+                Root<ConcertArtistEntity> ca = rank.from(ConcertArtistEntity.class);
+                CriteriaBuilder.SimpleCase<Long, Integer> position = cb.selectCase(ca.get("artistId"));
+                for (int i = 0; i < artistIds.size(); i++) {
+                    position.when(artistIds.get(i), i);
+                }
+                rank.select(cb.min(position.otherwise(artistIds.size()))).where(cb.equal(ca.get("concertId"), root.get("id")));
+                query.orderBy(cb.asc(rank), cb.asc(root.get("startsAt")), cb.asc(root.get("id")));
+            }
+            return null;
+        };
     }
 }
