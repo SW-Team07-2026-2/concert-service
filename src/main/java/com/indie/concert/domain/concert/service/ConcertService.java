@@ -73,6 +73,14 @@ public class ConcertService {
     public PageResult<ConcertSummary> list(LocalDate from, LocalDate to, List<Region> regions, List<Genre> genres,
                                            List<ConcertEntity.Type> types, List<ConcertEntity.SaleStatus> saleStatuses,
                                            Long artistId, List<Long> artistIds, String q, ListSort sort, int page, int size) {
+        return listOf(from, to, regions, genres, types, saleStatuses, artistIds(artistId, artistIds, sort), q, sort, page, size);
+    }
+
+    /** 검증을 마친 아티스트 ID 목록으로 — 팔로우 탭은 Member 에서 받은 순서를 그대로 넘깁니다 (상한 200 은 쿼리 문자열용) */
+    @Transactional(readOnly = true)
+    public PageResult<ConcertSummary> listOf(LocalDate from, LocalDate to, List<Region> regions, List<Genre> genres,
+                                             List<ConcertEntity.Type> types, List<ConcertEntity.SaleStatus> saleStatuses,
+                                             List<Long> artistIds, String q, ListSort sort, int page, int size) {
         OffsetDateTime now = OffsetDateTime.now(clock);
         boolean byStatus = saleStatuses != null && !saleStatuses.isEmpty();
         OffsetDateTime start = from != null ? startOfDay(from) : byStatus ? null : now;
@@ -81,7 +89,7 @@ public class ConcertService {
             throw new GeneralException(CommonErrorCode.INVALID_REQUEST, "to 는 from 이후여야 합니다");
         }
         var filter = new ConcertRepository.Filter(start, end, regions, genres == null ? null : genres.stream().map(Genre::name).toList(),
-                types, artistIds(artistId, artistIds, sort), q, saleStatuses, now, sort);
+                types, artistIds, q, saleStatuses, now, sort);
         Sort order = sort == ListSort.ARTIST_ORDER ? Sort.unsorted() : sort == ListSort.UPDATED ? BY_UPDATED : BY_START;
         return PageResult.of(concertRepository.search(filter, PageRequest.of(page, size, order)), this::summaries);
     }

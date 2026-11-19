@@ -61,6 +61,22 @@ public class ConcertController {
                 page, pageSize.resolve(size)));
     }
 
+    /**
+     * 11/19 전체 검색 (프론트 요구 1-3 · 2-2) — 공연 제목 · 라인업 아티스트 이름 · 공연장 이름 LIKE + 진행 현황 · 유형 · 지역 · 장르(모두 여러 개 · OR).
+     * q 가 없으면 칩만으로. saleStatus 를 안 고르면 지금 이후 공연만 · 고르면 지난 공연(CLOSED)도. 공연일 가까운 순
+     */
+    @GetMapping("/api/concerts/search")
+    public ApiResponse<PageResult<ConcertSummary>> search(@RequestParam(required = false) String q,
+                                                          @RequestParam(required = false) List<Region> region,
+                                                          @RequestParam(required = false) List<Genre> genre,
+                                                          @RequestParam(required = false) List<ConcertEntity.Type> type,
+                                                          @RequestParam(required = false) List<ConcertEntity.SaleStatus> saleStatus,
+                                                          @RequestParam(defaultValue = "0") @PositiveOrZero int page,
+                                                          @RequestParam(required = false) Integer size) {
+        return ApiResponse.onSuccess(concertService.list(null, null, region, genre, type, saleStatus, null, null, q, null,
+                page, pageSize.resolve(size)));
+    }
+
     @GetMapping("/api/concerts/{id}")
     public ApiResponse<ConcertDetail> get(@PathVariable @Positive long id) {
         return ApiResponse.onSuccess(concertService.get(id));
