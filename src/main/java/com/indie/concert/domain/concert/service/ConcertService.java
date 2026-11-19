@@ -111,7 +111,7 @@ public class ConcertService {
             VenueEntity v = venues.get(c.getVenueId());
             return new ConcertSummary(c.getId(), c.getTitle(), c.getType().name(), c.getGenre(),
                     lineups.getOrDefault(c.getId(), List.of()), c.getStartsAt(), c.getPrice(), c.saleStatus(now).name(),
-                    new VenueRef(v.getId(), v.getName(), v.getRegion().name()));
+                    new VenueRef(v.getId(), v.getName(), v.getRegion().name()), c.getPosterUrl());
         }).toList();
     }
 
