@@ -28,6 +28,9 @@ public interface ConcertRepository {
     /** 캘린더 — 시작 시각 [from, to) · artistIds 가 비어 있으면 전체 (라인업에 한 명이라도 있으면 포함) */
     List<ConcertEntity> findForCalendar(OffsetDateTime from, OffsetDateTime to, Collection<Long> artistIds);
 
+    /** 11/19 팔로우 탭 업데이트순 (Catalog 내부 호출) — 아티스트별 그 아티스트가 나오는 공연의 가장 최근 등록 · 수정 시각 · [artistId, max(updated_at)] */
+    List<Object[]> findLatestUpdatedByArtist(Collection<Long> artistIds);
+
     /** 공연장 상세 — 공연장의 예정 공연 */
     List<ConcertEntity> findByVenueIdAndStartsAtGreaterThanEqualOrderByStartsAtAsc(Long venueId, OffsetDateTime now, Limit limit);
 

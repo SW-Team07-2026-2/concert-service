@@ -30,6 +30,9 @@ import com.indie.concert.domain.queue.repository.QueueEntryRepository;
 import com.indie.concert.domain.queue.entity.QueueMember;
 import com.indie.concert.domain.queue.repository.QueueEntryRepositoryAdapter;
 import com.indie.concert.domain.seat.repository.ConcertSeatRepository;
+import com.indie.concert.domain.follow.client.MemberClient;
+import com.indie.concert.domain.follow.dto.request.FollowSort;
+import com.indie.concert.domain.follow.service.FollowingService;
 import com.indie.concert.global.common.exception.GeneralException;
 import com.indie.concert.global.common.util.ListSort;
 import com.indie.concert.global.config.ConcertProperties;
@@ -420,6 +423,49 @@ class ConcertSchemaTest {
         assertThatThrownBy(() -> concertService.list(null, null, null, null, null, null, a, List.of(b), null, null, 0, 20))
                 .isInstanceOf(GeneralException.class);
         assertThatThrownBy(() -> ids(null, null, null, null, null, null, ListSort.ARTIST_ORDER)).isInstanceOf(GeneralException.class);
+    }
+
+    /** 11/19 검색어에 공연장 이름 · 팔로우 탭(Member 대역) 정렬 3종 · 아티스트별 최근 공연 시각(Catalog 내부 호출) */
+    @Test
+    void followingSearchAndArtistLatest() {
+        long a = artist(301, "팔로우밴드가", "INDIE_ROCK");
+        long b = artist(302, "팔로우밴드나", "EMO");
+        long c = artist(303, "팔로우밴드다", "FOLK");
+        long one = listed("팔로우 공연 하나", venue("팔로우롤링홀"), "SOLO", "INDIE_ROCK", "10 days", "-1 hour", "-2 hours", a);
+        long two = listed("팔로우 공연 둘", venue("팔로우다른홀"), "FESTIVAL", "EMO", "20 days", "5 days", "-1 hour", b, a);
+        long three = listed("팔로우 공연 셋", venue("팔로우세번째홀"), "SOLO", "FOLK", "5 days", "-1 day", "-3 hours", c);
+
+        assertThat(ids(null, null, null, null, null, "팔로우롤링", null)).containsExactly(one);   // 공연장 이름
+
+        // Member 는 최근 팔로우순(c, b, a) · 팔로워 a 9 > b 5 > c 1
+        OffsetDateTime t = OffsetDateTime.now();
+        var follows = List.of(new MemberClient.FollowedArtist(c, t, 1), new MemberClient.FollowedArtist(b, t, 5),
+                new MemberClient.FollowedArtist(a, t, 9));
+        FollowingService following = new FollowingService(userId -> {
+            if (userId == 9) throw new MemberClient.Unavailable(new java.io.IOException("connection refused"));
+            return userId == 7 ? follows : List.of();
+        }, concertService, concertRepository);
+        assertThat(followingIds(following, null, null)).containsExactly(three, two, one);                       // 최근 팔로우순 (라인업 중 가장 앞 자리)
+        assertThat(followingIds(following, null, FollowSort.FOLLOWERS)).containsExactly(one, two, three);     // a 가 둘 다 나옴 → 공연일 순
+        assertThat(followingIds(following, null, FollowSort.UPDATED)).containsExactly(two, one, three);       // 공연 수정 최신순
+        assertThat(following.concerts(7, "팔로우다른", null, null, List.of(ConcertEntity.Type.FESTIVAL), null, null, 0, 20).items())
+                .extracting(com.indie.concert.domain.concert.dto.response.ConcertSummary::id).containsExactly(two);
+        assertThat(following.concerts(8, null, null, null, null, null, null, 0, 20).items()).isEmpty();
+        assertThatThrownBy(() -> following.concerts(9, null, null, null, null, null, null, 0, 20)).isInstanceOf(GeneralException.class);
+
+        // 아티스트별 최근 공연 시각 — a 는 둘(-1h) · b 도 둘 · c 는 셋(-3h) · 공연 없는 아티스트는 빠짐
+        Map<Long, OffsetDateTime> latest = new java.util.HashMap<>();
+        following.latestByArtist(List.of(a, b, c, 999L)).forEach(l -> latest.put(l.artistId(), l.latestAt()));
+        assertThat(latest).containsOnlyKeys(a, b, c);
+        assertThat(latest.get(a)).isEqualTo(latest.get(b));
+        assertThat(latest.get(c)).isBefore(latest.get(a));
+        assertThatThrownBy(() -> following.latestByArtist(java.util.stream.LongStream.rangeClosed(1, 1001).boxed().toList()))
+                .isInstanceOf(GeneralException.class);
+    }
+
+    private List<Long> followingIds(FollowingService following, String q, FollowSort sort) {
+        return following.concerts(7, q, null, null, null, null, sort, 0, 20).items().stream()
+                .map(com.indie.concert.domain.concert.dto.response.ConcertSummary::id).toList();
     }
 
     /** 라인업 수정 — 새로 들어온 아티스트만 concert.lineup_updated 의 addedArtistIds · 같은 목록 · 빼기만 하면 이벤트 없음 */

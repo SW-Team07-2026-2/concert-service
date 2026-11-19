@@ -32,9 +32,14 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
     default Slice<ConcertEntity> search(Filter f, Pageable pageable) {
         return findAll(Specification.where(startsFrom(f.from())).and(startsBefore(f.to())).and(inRegion(f.regions()))
                 .and(in("genre", f.genres())).and(in("type", f.types())).and(withArtists(f.artistIds()))
-                .and(titleOrArtist(f.q())).and(saleStatusIn(f.saleStatuses(), f.now()))
+                .and(titleArtistOrVenue(f.q())).and(saleStatusIn(f.saleStatuses(), f.now()))
                 .and(f.sort() == ListSort.ARTIST_ORDER ? byArtistOrder(f.artistIds()) : null), pageable);
     }
+
+    @Override
+    @Query("select ca.artistId, max(c.updatedAt) from ConcertArtistEntity ca, ConcertEntity c "
+            + "where c.id = ca.concertId and ca.artistId in :artistIds group by ca.artistId")
+    List<Object[]> findLatestUpdatedByArtist(@Param("artistIds") Collection<Long> artistIds);
 
     @Override
     default List<ConcertEntity> findForCalendar(OffsetDateTime from, OffsetDateTime to, Collection<Long> artistIds) {
@@ -103,7 +108,8 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
     }
 
     /** 공연 제목 또는 라인업 아티스트 이름 부분 일치 (대소문자 무시 · 검색어의 % _ 는 글자 그대로) */
-    private static Specification<ConcertEntity> titleOrArtist(String q) {
+    /** 11/19 검색어 LIKE — 공연 제목 · 라인업 아티스트 이름 · 공연장 이름 (프론트 요구 2-2) */
+    private static Specification<ConcertEntity> titleArtistOrVenue(String q) {
         if (q == null || q.isBlank()) return null;
         String pattern = "%" + q.strip().toLowerCase().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
         return (root, query, cb) -> {
@@ -113,7 +119,10 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
             Root<ArtistEntity> a = named.from(ArtistEntity.class);
             named.select(a.get("id")).where(cb.like(cb.lower(a.get("name")), pattern, '\\'));
             lineup.select(ca.get("concertId")).where(ca.get("artistId").in(named));
-            return cb.or(cb.like(cb.lower(root.get("title")), pattern, '\\'), root.get("id").in(lineup));
+            Subquery<Long> venue = query.subquery(Long.class);
+            Root<VenueEntity> v = venue.from(VenueEntity.class);
+            venue.select(v.get("id")).where(cb.like(cb.lower(v.get("name")), pattern, '\\'));
+            return cb.or(cb.like(cb.lower(root.get("title")), pattern, '\\'), root.get("id").in(lineup), root.get("venueId").in(venue));
         };
     }
 
