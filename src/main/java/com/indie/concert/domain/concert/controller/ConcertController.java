@@ -12,6 +12,7 @@ import com.indie.concert.domain.concert.service.ConcertService;
 import com.indie.concert.domain.concert.service.VenueService;
 import com.indie.concert.global.common.response.ApiResponse;
 import com.indie.concert.global.common.response.PageResult;
+import com.indie.concert.global.common.util.ListSort;
 import com.indie.concert.global.common.util.PageSize;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -38,17 +39,26 @@ public class ConcertController {
         this.pageSize = pageSize;
     }
 
+    /**
+     * 11/19 팔로우 탭 — region · genre · type · saleStatus · artistIds 는 여러 개 (region=SEOUL&region=BUSAN 또는 region=SEOUL,BUSAN).
+     * saleStatus 를 고르면 지난 공연(CLOSED)도 나옵니다 · q 는 공연 제목 · 라인업 아티스트 이름 · artistId(하나)는 기존 그대로
+     */
     @GetMapping("/api/concerts")
     public ApiResponse<PageResult<ConcertSummary>> list(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
-            @RequestParam(required = false) Region region,
-            @RequestParam(required = false) Genre genre,
-            @RequestParam(required = false) ConcertEntity.Type type,
+            @RequestParam(required = false) List<Region> region,
+            @RequestParam(required = false) List<Genre> genre,
+            @RequestParam(required = false) List<ConcertEntity.Type> type,
+            @RequestParam(required = false) List<ConcertEntity.SaleStatus> saleStatus,
             @RequestParam(required = false) @Positive Long artistId,
+            @RequestParam(required = false) List<Long> artistIds,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) ListSort sort,
             @RequestParam(defaultValue = "0") @PositiveOrZero int page,
             @RequestParam(required = false) Integer size) {
-        return ApiResponse.onSuccess(concertService.list(from, to, region, genre, type, artistId, page, pageSize.resolve(size)));
+        return ApiResponse.onSuccess(concertService.list(from, to, region, genre, type, saleStatus, artistId, artistIds, q, sort,
+                page, pageSize.resolve(size)));
     }
 
     @GetMapping("/api/concerts/{id}")

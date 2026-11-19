@@ -31,6 +31,7 @@ import com.indie.concert.domain.queue.entity.QueueMember;
 import com.indie.concert.domain.queue.repository.QueueEntryRepositoryAdapter;
 import com.indie.concert.domain.seat.repository.ConcertSeatRepository;
 import com.indie.concert.global.common.exception.GeneralException;
+import com.indie.concert.global.common.util.ListSort;
 import com.indie.concert.global.config.ConcertProperties;
 import com.indie.concert.global.outbox.OutboxAppender;
 import org.junit.jupiter.api.Test;
@@ -101,6 +102,7 @@ class ConcertSchemaTest {
     }
 
     @Autowired ConcertSeatRepository seatRepository;
+    @Autowired ConcertService concertService;
     @Autowired ConcertRepository concertRepository;
     @Autowired BookingRepository bookingRepository;
     @Autowired QueueEntryRepository queueEntries;
@@ -382,10 +384,42 @@ class ConcertSchemaTest {
         assertThat(detail.artists()).extracting(ArtistRef::id).containsExactly(a2, a1);
         assertThat(detail.maxSeatsPerUser()).isEqualTo(4);
         assertThat(lastEvent("concert.created").get("artistIds").toString()).isEqualTo("[" + a2 + "," + a1 + "]");
-        assertThat(concertRepository.search(new ConcertRepository.Filter(null, null, null, null, null, a1),
+        assertThat(concertRepository.search(new ConcertRepository.Filter(null, null, null, null, null, List.of(a1), null, null, null, null),
                 org.springframework.data.domain.PageRequest.of(0, 10)).getContent()).extracting(ConcertEntity::getId).contains(detail.id());
         assertThat(concertRepository.findForCalendar(detail.startsAt().minusDays(1), detail.startsAt().plusDays(1), List.of(a1)))
                 .extracting(ConcertEntity::getId).contains(detail.id());
+    }
+
+    /** 11/19 팔로우 탭 — 목록 조건 여러 개 · 검색어(제목 · 라인업 이름) · 진행 현황(지난 공연 포함) · ARTIST_ORDER · UPDATED */
+    @Test
+    void followTabListFiltersAndSorts() {
+        long a = artist(201, "필터밴드가", "INDIE_ROCK");
+        long b = artist(202, "필터밴드나", "EMO");
+        long c = artist(203, "필터밴드다", "FOLK");
+        long seoul = venue("필터홀서울");
+        long busan = admin.createVenue(new VenueCreateRequest("필터홀부산", Region.BUSAN, null, 500)).id();
+        long onSale = listed("필터 공연 하나", seoul, "SOLO", "INDIE_ROCK", "10 days", "-1 hour", "1 hour", a);
+        long scheduled = listed("필터 공연 둘", busan, "FESTIVAL", "EMO", "20 days", "5 days", "-1 hour", b, c);
+        long closed = listed("필터 공연 셋", seoul, "SOLO", "FOLK", "-3 days", "-30 days", "-2 hours", c);
+        List<ConcertEntity.SaleStatus> all = List.of(ConcertEntity.SaleStatus.values());
+
+        assertThat(ids(null, null, null, null, null, "필터 공연", null)).containsExactly(onSale, scheduled);   // 기본은 지금 이후
+        assertThat(ids(null, null, null, List.of(ConcertEntity.SaleStatus.CLOSED), null, "필터 공연", null)).containsExactly(closed);
+        assertThat(ids(null, null, null, List.of(ConcertEntity.SaleStatus.SCHEDULED, ConcertEntity.SaleStatus.ON_SALE), null, "필터 공연", null))
+                .containsExactly(onSale, scheduled);
+        assertThat(ids(List.of(Region.BUSAN), null, null, null, null, "필터 공연", null)).containsExactly(scheduled);
+        assertThat(ids(null, List.of(Genre.INDIE_ROCK, Genre.FOLK), null, all, null, "필터 공연", null)).containsExactly(closed, onSale);
+        assertThat(ids(null, null, List.of(ConcertEntity.Type.FESTIVAL), null, null, "필터 공연", null)).containsExactly(scheduled);
+        assertThat(ids(null, null, null, all, null, "필터밴드나", null)).containsExactly(scheduled);              // 라인업 이름
+
+        // 넘긴 순서 — 라인업 중 가장 앞 자리 (둘 = 다(0) · 나(목록 밖)) · 같은 자리는 공연일 순
+        assertThat(ids(null, null, null, all, List.of(c, a), null, ListSort.ARTIST_ORDER)).containsExactly(closed, scheduled, onSale);
+        assertThat(ids(null, null, null, null, List.of(a, b), null, ListSort.ARTIST_ORDER)).containsExactly(onSale, scheduled);
+        assertThat(ids(null, null, null, all, List.of(a, b, c), null, ListSort.UPDATED)).containsExactly(onSale, scheduled, closed);
+
+        assertThatThrownBy(() -> concertService.list(null, null, null, null, null, null, a, List.of(b), null, null, 0, 20))
+                .isInstanceOf(GeneralException.class);
+        assertThatThrownBy(() -> ids(null, null, null, null, null, null, ListSort.ARTIST_ORDER)).isInstanceOf(GeneralException.class);
     }
 
     /** 라인업 수정 — 새로 들어온 아티스트만 concert.lineup_updated 의 addedArtistIds · 같은 목록 · 빼기만 하면 이벤트 없음 */
@@ -525,6 +559,24 @@ class ConcertSchemaTest {
     }
 
     /** 공연장 배치에 좌석을 하나 만들고 이 공연에서 팝니다 — 반환은 concert_seat.id */
+    /** 공연 하나 + 라인업 — starts · opens · updated 는 now() 기준 간격 ("10 days", "-1 hour") */
+    private long listed(String title, long venueId, String type, String genre, String starts, String opens, String updated, long... lineup) {
+        long id = jdbc.queryForObject("""
+                INSERT INTO concert (venue_id, title, type, genre, starts_at, booking_open_at, max_seats_per_user, updated_at)
+                VALUES (?, ?, ?, ?, now() + CAST(? AS interval), now() + CAST(? AS interval), 4, now() + CAST(? AS interval)) RETURNING id
+                """, Long.class, venueId, title, type, genre, starts, opens, updated);
+        for (int i = 0; i < lineup.length; i++) {
+            jdbc.update("INSERT INTO concert_artist (concert_id, artist_id, billing_order) VALUES (?, ?, ?)", id, lineup[i], i + 1);
+        }
+        return id;
+    }
+
+    private List<Long> ids(List<Region> regions, List<Genre> genres, List<ConcertEntity.Type> types, List<ConcertEntity.SaleStatus> statuses,
+                           List<Long> artistIds, String q, ListSort sort) {
+        return concertService.list(null, null, regions, genres, types, statuses, null, artistIds, q, sort, 0, 20).items().stream()
+                .map(com.indie.concert.domain.concert.dto.response.ConcertSummary::id).toList();
+    }
+
     private long seat(long concertId) {
         long venueId = jdbc.queryForObject("SELECT venue_id FROM concert WHERE id = ?", Long.class, concertId);
         long sectionId = layoutService.saveSection(venueId, layout(venueId, "1F", "S" + SECTION.incrementAndGet(), 0, 1, 1)).sectionId();

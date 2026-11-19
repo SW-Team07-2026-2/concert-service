@@ -2,6 +2,7 @@ package com.indie.concert.domain.concert.repository;
 
 import com.indie.concert.domain.concert.entity.ConcertEntity;
 import com.indie.concert.domain.concert.entity.Region;
+import com.indie.concert.global.common.util.ListSort;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
@@ -44,6 +45,11 @@ public interface ConcertRepository {
 
     ConcertEntity save(ConcertEntity concert);
 
-    /** from 이상 · to 미만. region 은 공연장 지역 · genre 는 공연 장르 · artistId 는 라인업에 있는 공연 */
-    record Filter(OffsetDateTime from, OffsetDateTime to, Region region, String genre, ConcertEntity.Type type, Long artistId) {}
+    /**
+     * from 이상 · to 미만 (null 이면 끝 없음). 목록 조건은 하나라도 맞으면 (null · 빈 목록이면 무시) —
+     * regions 는 공연장 지역 · genres 는 공연 장르 · artistIds 는 라인업에 있는 공연 · q 는 공연 제목 · 라인업 아티스트 이름 ·
+     * saleStatuses 는 now 기준 판매 상태 (ConcertEntity.saleStatus 와 같은 기준). sort=ARTIST_ORDER 면 artistIds 순서로 정렬합니다
+     */
+    record Filter(OffsetDateTime from, OffsetDateTime to, List<Region> regions, List<String> genres, List<ConcertEntity.Type> types,
+                  List<Long> artistIds, String q, List<ConcertEntity.SaleStatus> saleStatuses, OffsetDateTime now, ListSort sort) {}
 }
