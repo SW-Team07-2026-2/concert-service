@@ -75,6 +75,7 @@ springdoc:
 app:
   internal:                                   # 들어오는 /internal/** 검증
     expected-audience: concert
+    news-issuers: [catalog]                   # 11/19 POST /internal/concerts/artists/latest 만 — 팔로우 탭 아티스트 업데이트순 (이 토큰으로 다른 내부 API 는 못 부름)
     allowed-issuers: [studio, ops]            # 11/13 — 공연 · 공연장 배치는 관리자(Studio)를 거쳐서만 들어옵니다 (수집기 직접 적재 경로 삭제). TODO(결정대기): 운영 스크립트의 iss 이름
     clock-skew-seconds: 30
   internal-token:                             # 나가는 호출 (Concert → Payment)
@@ -84,6 +85,8 @@ app:
     base-url: ${PAYMENT_BASE_URL:http://payment:8084}
     connect-timeout-ms: 1000
     read-timeout-ms: 3000                     # 11 §4 — 동기 호출 타임아웃 3초
+  member:                                     # 11/19 팔로우 탭 — /api/concerts/following 이 팔로우 목록을 받아 옴 (타임아웃 1초 / 3초)
+    base-url: ${MEMBER_BASE_URL:http://member:8081}
   zone: Asia/Seoul                            # 캘린더 · 날짜 필터의 하루 경계
   booking:
     hold-minutes: 7                           # 11/09 화면 시계 = 대기열 통과부터 결제하기까지 7분 하나 · 좌석을 고르면(N10) 입장 토큰 남은 시간을 이어받음

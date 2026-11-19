@@ -25,14 +25,26 @@ class InternalTokenFilterTest {
     private static final String SECRET = "0123456789abcdef0123456789abcdef-local";
 
     private final InternalTokenFilter filter = new InternalTokenFilter(SECRET,
-            new ConcertProperties.Internal("concert", List.of("studio", "ops"), 30), Clock.systemUTC(), new ObjectMapper());
+            new ConcertProperties.Internal("concert", List.of("studio", "ops"), List.of("catalog"), 30), Clock.systemUTC(), new ObjectMapper());
 
     private MockHttpServletResponse call(String token) throws Exception {
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/internal/x");
+        return call(token, "/internal/x");
+    }
+
+    private MockHttpServletResponse call(String token, String path) throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", path);
         if (token != null) request.addHeader(InternalTokenFilter.HEADER, token);
         MockHttpServletResponse response = new MockHttpServletResponse();
         filter.doFilter(request, response, new MockFilterChain());
         return response;
+    }
+
+    /** 11/19 아티스트별 최근 공연 시각 경로만 catalog 토큰 — 그 토큰으로 다른 내부 API 는 못 부르고, 관리자 토큰은 이 경로를 못 부름 */
+    @Test
+    void newsPathAcceptsOnlyNewsIssuers() throws Exception {
+        assertThat(call(token(SECRET, "catalog", "concert", 300), InternalTokenFilter.NEWS_PATH).getStatus()).isEqualTo(200);
+        assertThat(call(token(SECRET, "catalog", "concert", 300), "/internal/admin/concerts").getStatus()).isEqualTo(401);
+        assertThat(call(token(SECRET, "studio", "concert", 300), InternalTokenFilter.NEWS_PATH).getStatus()).isEqualTo(401);
     }
 
     @Test

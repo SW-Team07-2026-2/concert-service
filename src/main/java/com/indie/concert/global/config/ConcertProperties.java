@@ -8,7 +8,8 @@ import java.util.List;
 public record ConcertProperties(Internal internal, InternalToken internalToken, Payment payment, String zone,
                                 Booking booking, Queue queue, Page page, Cache cache, Outbox outbox, Redis redis, Entry entry) {
 
-    public record Internal(String expectedAudience, List<String> allowedIssuers, long clockSkewSeconds) {}
+    /** newsIssuers — 11/19 POST /internal/concerts/artists/latest 만 부를 수 있는 발급자(catalog · 팔로우 탭) */
+    public record Internal(String expectedAudience, List<String> allowedIssuers, List<String> newsIssuers, long clockSkewSeconds) {}
 
     public record InternalToken(String issuer, long ttlSeconds) {}
 
