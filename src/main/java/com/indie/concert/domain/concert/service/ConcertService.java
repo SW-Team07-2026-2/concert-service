@@ -16,6 +16,7 @@ import com.indie.concert.domain.concert.repository.VenueRepository;
 import com.indie.concert.global.common.exception.CommonErrorCode;
 import com.indie.concert.global.common.exception.GeneralException;
 import com.indie.concert.global.common.response.PageResult;
+import com.indie.concert.global.common.util.ListSort;
 import com.indie.concert.global.config.ConcertProperties;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -29,6 +30,7 @@ import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -43,6 +45,9 @@ import java.util.stream.Collectors;
 public class ConcertService {
 
     private static final Sort BY_START = Sort.by("startsAt").ascending().and(Sort.by("id").ascending());
+    private static final Sort BY_UPDATED = Sort.by("updatedAt").descending().and(Sort.by("id").descending());
+    /** 팔로우한 아티스트를 한 번에 넘길 수 있는 최대 수 (쿼리 문자열 길이) */
+    static final int MAX_ARTIST_IDS = 200;
 
     private final ConcertRepository concertRepository;
     private final VenueRepository venueRepository;
@@ -59,17 +64,41 @@ public class ConcertService {
         this.clock = clock;
     }
 
-    /** N1 — from 이 없으면 지금 이후 (지난 공연 제외). to 는 그날까지 포함 */
+    /**
+     * N1 — from 이 없으면 지금 이후 (지난 공연 제외). to 는 그날까지 포함.
+     * 11/19 팔로우 탭 — 목록 조건은 여러 개 · saleStatus 를 고르면 기본 '지금 이후' 를 풀어 지난 공연(CLOSED)도 거릅니다 ·
+     * sort 없으면 공연일 가까운 순 · ARTIST_ORDER 는 artistIds 순서 · UPDATED 는 최근 수정순
+     */
     @Transactional(readOnly = true)
-    public PageResult<ConcertSummary> list(LocalDate from, LocalDate to, Region region, Genre genre,
-                                           ConcertEntity.Type type, Long artistId, int page, int size) {
-        OffsetDateTime start = from == null ? OffsetDateTime.now(clock) : startOfDay(from);
+    public PageResult<ConcertSummary> list(LocalDate from, LocalDate to, List<Region> regions, List<Genre> genres,
+                                           List<ConcertEntity.Type> types, List<ConcertEntity.SaleStatus> saleStatuses,
+                                           Long artistId, List<Long> artistIds, String q, ListSort sort, int page, int size) {
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        boolean byStatus = saleStatuses != null && !saleStatuses.isEmpty();
+        OffsetDateTime start = from != null ? startOfDay(from) : byStatus ? null : now;
         OffsetDateTime end = to == null ? null : startOfDay(to.plusDays(1));
-        if (end != null && !end.isAfter(start)) {
+        if (start != null && end != null && !end.isAfter(start)) {
             throw new GeneralException(CommonErrorCode.INVALID_REQUEST, "to 는 from 이후여야 합니다");
         }
-        var filter = new ConcertRepository.Filter(start, end, region, genre == null ? null : genre.name(), type, artistId);
-        return PageResult.of(concertRepository.search(filter, PageRequest.of(page, size, BY_START)), this::summaries);
+        var filter = new ConcertRepository.Filter(start, end, regions, genres == null ? null : genres.stream().map(Genre::name).toList(),
+                types, artistIds(artistId, artistIds, sort), q, saleStatuses, now, sort);
+        Sort order = sort == ListSort.ARTIST_ORDER ? Sort.unsorted() : sort == ListSort.UPDATED ? BY_UPDATED : BY_START;
+        return PageResult.of(concertRepository.search(filter, PageRequest.of(page, size, order)), this::summaries);
+    }
+
+    /** artistId(하나 · 기존) · artistIds(여러 개) 중 하나 → 순서를 지킨 목록 (중복은 앞의 것) */
+    static List<Long> artistIds(Long artistId, List<Long> artistIds, ListSort sort) {
+        if (artistId != null && artistIds != null) {
+            throw new GeneralException(CommonErrorCode.INVALID_REQUEST, "artistId 와 artistIds 는 하나만 보냅니다");
+        }
+        List<Long> ids = artistId != null ? List.of(artistId) : artistIds == null ? List.of() : List.copyOf(new LinkedHashSet<>(artistIds));
+        if (ids.size() > MAX_ARTIST_IDS) {
+            throw new GeneralException(CommonErrorCode.INVALID_REQUEST, "artistIds 는 최대 " + MAX_ARTIST_IDS + "개입니다");
+        }
+        if (sort == ListSort.ARTIST_ORDER && ids.isEmpty()) {
+            throw new GeneralException(CommonErrorCode.INVALID_REQUEST, "sort=ARTIST_ORDER 는 artistIds 가 필요합니다");
+        }
+        return ids;
     }
 
     /** N2 — 공연 상세 + 공연장 + 판매 상태 + 예매 오픈 시각 (08 §7) */

@@ -45,7 +45,7 @@ class ConcertServiceTest {
         when(lineups.of(anyCollection())).thenReturn(Map.of());
         when(concerts.search(any(), any())).thenReturn(new SliceImpl<>(List.of(concert(1L, POSTER), concert(2L, null))));
 
-        List<ConcertSummary> items = service.list(null, null, null, null, null, null, 0, 20).items();
+        List<ConcertSummary> items = service.list(null, null, null, null, null, null, null, null, null, null, 0, 20).items();
 
         assertThat(items).extracting(ConcertSummary::id).containsExactly(1L, 2L);
         assertThat(items).extracting(ConcertSummary::posterUrl).containsExactly(POSTER, null);
