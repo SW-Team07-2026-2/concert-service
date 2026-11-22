@@ -1,5 +1,10 @@
 package com.indie.concert;
 
+import com.indie.concert.domain.concert.entity.ConcertNoticeEntity;
+import com.indie.concert.domain.concert.dto.response.NoticeView;
+import com.indie.concert.domain.concert.dto.request.NoticeUpdateRequest;
+import com.indie.concert.domain.concert.dto.request.NoticeCreateRequest;
+import com.indie.concert.domain.concert.service.ConcertNoticeService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indie.concert.domain.seat.entity.ConcertSeatEntity;
 import com.indie.concert.domain.layout.dto.response.VenueLayout;
@@ -80,7 +85,8 @@ import static org.assertj.core.groups.Tuple.tuple;
 @DataJpaTest(properties = "spring.jpa.hibernate.ddl-auto=validate")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({QueueEntryRepositoryAdapter.class, OutboxAppender.class, ConcertSchemaTest.Beans.class, LayoutService.class,
-        ConcertAdminService.class, ConcertService.class, LineupReader.class, ConcertEvents.class, ArtistService.class})
+        ConcertAdminService.class, ConcertService.class, LineupReader.class, ConcertEvents.class, ArtistService.class,
+        ConcertNoticeService.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class ConcertSchemaTest {
 
@@ -112,6 +118,7 @@ class ConcertSchemaTest {
     @Autowired ArtistRepository artists;
     @Autowired LayoutService layoutService;
     @Autowired ConcertAdminService admin;
+    @Autowired ConcertNoticeService notices;
     @Autowired ArtistService artistService;
     @Autowired JdbcTemplate jdbc;
     @Autowired TransactionTemplate tx;
@@ -493,6 +500,35 @@ class ConcertSchemaTest {
         assertThat(admin.replaceLineup(id, List.of(a3, a2)).artists()).extracting(ArtistRef::id).containsExactly(a3, a2);
     }
 
+    /** 공연 변경 공지 — 새 공지만 concert.notice_posted (라인업 + 확정 예매자만) · 고치기 · 지우기는 알림 없음 · 최신순 */
+    @Test
+    void noticesNotifyLineupFollowersAndConfirmedBookers() throws Exception {
+        long a1 = artist(141, "혁오", "INDIE_ROCK");
+        long a2 = artist(142, "새소년", "INDIE_ROCK");
+        long id = admin.create(festival(venue("공지홀"), "공지 페스티벌", List.of(a1, a2))).id();
+        jdbc.update("INSERT INTO booking (user_id, concert_id, status, total_price, created_at) VALUES "
+                + "(7001, ?, 'CONFIRMED', 55000, now()), (7002, ?, 'CANCELLED', 55000, now()), (7003, ?, 'CONFIRMED', 55000, now())", id, id, id);
+
+        NoticeView first = notices.create(id, new NoticeCreateRequest(ConcertNoticeEntity.Kind.SCHEDULE, " 시간 변경 ", "19시 → 18시"));
+        var event = lastEvent("concert.notice_posted");
+        NoticeView second = notices.create(id, new NoticeCreateRequest(ConcertNoticeEntity.Kind.ETC, "주차 안내", "주차 불가"));
+        notices.update(id, first.id(), new NoticeUpdateRequest(null, null, "19시 → 18시 30분"));
+
+        assertThat(first.title()).isEqualTo("시간 변경");
+        assertThat(event.get("noticeId").asLong()).isEqualTo(first.id());
+        assertThat(event.get("kind").asText()).isEqualTo("SCHEDULE");
+        assertThat(event.get("artistIds").toString()).isEqualTo("[" + a1 + "," + a2 + "]");
+        assertThat(event.get("bookerUserIds").toString()).isEqualTo("[7001,7003]");            // 취소한 예매자는 빼고
+        assertThat(notices.list(id)).extracting(NoticeView::id).containsExactly(second.id(), first.id());
+        assertThat(notices.list(id).get(1).body()).isEqualTo("19시 → 18시 30분");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM outbox WHERE event_type = 'concert.notice_posted'", Integer.class)).isEqualTo(2);
+
+        notices.delete(id, second.id());
+        assertThat(notices.list(id)).extracting(NoticeView::id).containsExactly(first.id());
+        assertThatThrownBy(() -> notices.delete(id + 999, first.id())).isInstanceOf(GeneralException.class);   // 다른 공연의 공지 아님
+        assertThatThrownBy(() -> notices.update(id, first.id(), new NoticeUpdateRequest(null, "  ", null))).isInstanceOf(GeneralException.class);
+    }
+
     /** 단독 공연 장르 = 아티스트 장르 — artist.updated 로 같이 바뀌고 페스티벌은 그대로 · 옛 이벤트는 무시 */
     @Test
     void soloGenreFollowsArtist() {
@@ -546,6 +582,7 @@ class ConcertSchemaTest {
         assertThat(checkValues("ck_concert_genre")).isEqualTo(names(Genre.values()));
         assertThat(checkValues("ck_venue_region")).isEqualTo(names(Region.values()));
         assertThat(checkValues("ck_concert_type")).isEqualTo(names(ConcertEntity.Type.values()));
+        assertThat(checkValues("ck_concert_notice_kind")).isEqualTo(names(ConcertNoticeEntity.Kind.values()));
         assertThat(checkValues("ck_booking_status")).isEqualTo(names(BookingEntity.Status.values()));
         assertThat(checkValues("ck_concert_seat_status")).isEqualTo(names(ConcertSeatEntity.Status.values()));
         assertThat(checkValues("ck_queue_entry_status")).isEqualTo(names(QueueEntryEntity.Status.values()));

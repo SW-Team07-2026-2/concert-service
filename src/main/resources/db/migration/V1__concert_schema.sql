@@ -95,6 +95,18 @@ CREATE TABLE concert_artist (
 );
 CREATE INDEX idx_concert_artist_artist ON concert_artist(artist_id, concert_id);   -- 아티스트별 공연 · 캘린더 · 장르 갱신
 
+-- 공연 변경 공지 (11/18) — 일정 · 장소 · 출연진 · 예매 일정 변경, 취소 등. 공연 값 자체는 공연 수정으로 바꾸고, 여기는 회원에게 알리는 글
+CREATE TABLE concert_notice (
+    id         BIGSERIAL PRIMARY KEY,
+    concert_id BIGINT       NOT NULL REFERENCES concert(id),
+    kind       VARCHAR(16)  NOT NULL,                    -- SCHEDULE | VENUE | LINEUP | BOOKING | CANCEL | ETC (V2 ck_concert_notice_kind)
+    title      VARCHAR(200) NOT NULL,
+    body       TEXT         NOT NULL,
+    created_at TIMESTAMPTZ  NOT NULL,
+    updated_at TIMESTAMPTZ  NOT NULL
+);
+CREATE INDEX idx_concert_notice_concert ON concert_notice(concert_id, id DESC);
+
 -- ── 예매 ───────────────────────────────────────────────────────
 CREATE TABLE booking (
     id              BIGSERIAL PRIMARY KEY,
