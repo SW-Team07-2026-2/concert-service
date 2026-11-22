@@ -44,6 +44,9 @@ public interface BookingRepository {
     /** user.withdrawn — 탈퇴 회원의 결제 전 예매 (idx_booking_user) */
     List<Long> findPendingIds(long userId);
 
+    /** 공연 변경 공지 알림 — 그 공연의 확정 예매자 (uq_booking_active 가 덮음) */
+    List<Long> findConfirmedUserIds(long concertId);
+
     /** PENDING → CONFIRMED. 0 = 이미 전이됨 */
     int confirm(long id);
 

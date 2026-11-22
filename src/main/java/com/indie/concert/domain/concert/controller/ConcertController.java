@@ -3,11 +3,13 @@ package com.indie.concert.domain.concert.controller;
 import com.indie.concert.domain.concert.dto.response.ConcertCalendar;
 import com.indie.concert.domain.concert.dto.response.ConcertDetail;
 import com.indie.concert.domain.concert.dto.response.ConcertSummary;
+import com.indie.concert.domain.concert.dto.response.NoticeView;
 import com.indie.concert.domain.concert.dto.response.VenueDetail;
 import com.indie.concert.domain.concert.dto.response.VenueView;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
 import com.indie.concert.domain.concert.entity.Genre;
 import com.indie.concert.domain.concert.entity.Region;
+import com.indie.concert.domain.concert.service.ConcertNoticeService;
 import com.indie.concert.domain.concert.service.ConcertService;
 import com.indie.concert.domain.concert.service.VenueService;
 import com.indie.concert.global.common.response.ApiResponse;
@@ -31,11 +33,14 @@ public class ConcertController {
 
     private final ConcertService concertService;
     private final VenueService venueService;
+    private final ConcertNoticeService noticeService;
     private final PageSize pageSize;
 
-    public ConcertController(ConcertService concertService, VenueService venueService, PageSize pageSize) {
+    public ConcertController(ConcertService concertService, VenueService venueService, ConcertNoticeService noticeService,
+                             PageSize pageSize) {
         this.concertService = concertService;
         this.venueService = venueService;
+        this.noticeService = noticeService;
         this.pageSize = pageSize;
     }
 
@@ -80,6 +85,12 @@ public class ConcertController {
     @GetMapping("/api/concerts/{id}")
     public ApiResponse<ConcertDetail> get(@PathVariable @Positive long id) {
         return ApiResponse.onSuccess(concertService.get(id));
+    }
+
+    /** 공연 변경 공지 — 최신순 (11/18) */
+    @GetMapping("/api/concerts/{id}/notices")
+    public ApiResponse<List<NoticeView>> notices(@PathVariable @Positive long id) {
+        return ApiResponse.onSuccess(noticeService.list(id));
     }
 
     /** ?month=2026-11&artistIds=1,2 */
