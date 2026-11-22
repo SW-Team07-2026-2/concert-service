@@ -16,6 +16,7 @@ ALTER TABLE venue ADD CONSTRAINT ck_venue_region CHECK (region IN (
     'SEOUL','BUSAN','DAEGU','INCHEON','GWANGJU','DAEJEON','ULSAN','SEJONG',
     'GYEONGGI','GANGWON','CHUNGBUK','CHUNGNAM','JEONBUK','JEONNAM','GYEONGBUK','GYEONGNAM','JEJU'));
 ALTER TABLE concert ADD CONSTRAINT ck_concert_type CHECK (type IN ('SOLO','FESTIVAL'));
+ALTER TABLE concert_notice ADD CONSTRAINT ck_concert_notice_kind CHECK (kind IN ('SCHEDULE','VENUE','LINEUP','BOOKING','CANCEL','ETC'));   -- ConcertNoticeEntity.Kind
 
 -- ── 예매 · 좌석 · 대기열 (BookingEntity.Status · ConcertSeatEntity.Status · QueueEntryEntity.Status) ──
 ALTER TABLE booking ADD CONSTRAINT ck_booking_status CHECK (status IN ('PENDING','CONFIRMED','CANCELLED','EXPIRED'));
