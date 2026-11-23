@@ -18,6 +18,7 @@ import com.indie.concert.global.common.util.ListSort;
 import com.indie.concert.global.common.util.PageSize;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -58,7 +59,7 @@ public class ConcertController {
             @RequestParam(required = false) List<ConcertEntity.SaleStatus> saleStatus,
             @RequestParam(required = false) @Positive Long artistId,
             @RequestParam(required = false) List<Long> artistIds,
-            @RequestParam(required = false) String q,
+            @RequestParam(required = false) @Size(max = 100) String q,
             @RequestParam(required = false) ListSort sort,
             @RequestParam(defaultValue = "0") @PositiveOrZero int page,
             @RequestParam(required = false) Integer size) {
@@ -71,7 +72,7 @@ public class ConcertController {
      * q 가 없으면 칩만으로. saleStatus 를 안 고르면 지금 이후 공연만 · 고르면 지난 공연(CLOSED)도. 공연일 가까운 순
      */
     @GetMapping("/api/concerts/search")
-    public ApiResponse<PageResult<ConcertSummary>> search(@RequestParam(required = false) String q,
+    public ApiResponse<PageResult<ConcertSummary>> search(@RequestParam(required = false) @Size(max = 100) String q,
                                                           @RequestParam(required = false) List<Region> region,
                                                           @RequestParam(required = false) List<Genre> genre,
                                                           @RequestParam(required = false) List<ConcertEntity.Type> type,
@@ -103,7 +104,7 @@ public class ConcertController {
 
     @GetMapping("/api/concerts/venues")
     public ApiResponse<PageResult<VenueView>> venues(@RequestParam(required = false) Region region,
-                                                       @RequestParam(required = false) String q,
+                                                       @RequestParam(required = false) @Size(max = 100) String q,
                                                        @RequestParam(defaultValue = "false") boolean hasUpcoming,
                                                        @RequestParam(defaultValue = "0") @PositiveOrZero int page,
                                                        @RequestParam(required = false) Integer size) {
