@@ -11,6 +11,7 @@ import com.indie.concert.global.common.response.ApiResponse;
 import com.indie.concert.global.common.response.PageResult;
 import com.indie.concert.global.common.util.PageSize;
 import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -35,7 +36,7 @@ public class FollowingController {
 
     @GetMapping("/api/concerts/following")
     public ApiResponse<PageResult<ConcertSummary>> concerts(@CurrentUser Long userId,
-                                                            @RequestParam(required = false) String q,
+                                                            @RequestParam(required = false) @Size(max = 100) String q,
                                                             @RequestParam(required = false) List<Region> region,
                                                             @RequestParam(required = false) List<Genre> genre,
                                                             @RequestParam(required = false) List<ConcertEntity.Type> type,
