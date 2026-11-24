@@ -12,16 +12,19 @@ import com.indie.concert.domain.concert.entity.Region;
 import com.indie.concert.domain.concert.service.ConcertNoticeService;
 import com.indie.concert.domain.concert.service.ConcertService;
 import com.indie.concert.domain.concert.service.VenueService;
+import com.indie.concert.global.auth.CurrentUserArgumentResolver;
 import com.indie.concert.global.common.response.ApiResponse;
 import com.indie.concert.global.common.response.PageResult;
 import com.indie.concert.global.common.util.ListSort;
 import com.indie.concert.global.common.util.PageSize;
+import com.indie.concert.global.event.UserMetrics;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -36,13 +39,15 @@ public class ConcertController {
     private final VenueService venueService;
     private final ConcertNoticeService noticeService;
     private final PageSize pageSize;
+    private final UserMetrics userMetrics;
 
     public ConcertController(ConcertService concertService, VenueService venueService, ConcertNoticeService noticeService,
-                             PageSize pageSize) {
+                             PageSize pageSize, UserMetrics userMetrics) {
         this.concertService = concertService;
         this.venueService = venueService;
         this.noticeService = noticeService;
         this.pageSize = pageSize;
+        this.userMetrics = userMetrics;
     }
 
     /**
@@ -70,6 +75,7 @@ public class ConcertController {
     /**
      * 11/19 전체 검색 (프론트 요구 1-3 · 2-2) — 공연 제목 · 라인업 아티스트 이름 · 공연장 이름 LIKE + 진행 현황 · 유형 · 지역 · 장르(모두 여러 개 · OR).
      * q 가 없으면 칩만으로. saleStatus 를 안 고르면 지금 이후 공연만 · 고르면 지난 공연(CLOSED)도. 공연일 가까운 순
+     * 11/24 로그인했으면 검색어를 user.metric 으로 남깁니다.
      */
     @GetMapping("/api/concerts/search")
     public ApiResponse<PageResult<ConcertSummary>> search(@RequestParam(required = false) @Size(max = 100) String q,
@@ -78,9 +84,12 @@ public class ConcertController {
                                                           @RequestParam(required = false) List<ConcertEntity.Type> type,
                                                           @RequestParam(required = false) List<ConcertEntity.SaleStatus> saleStatus,
                                                           @RequestParam(defaultValue = "0") @PositiveOrZero int page,
-                                                          @RequestParam(required = false) Integer size) {
-        return ApiResponse.onSuccess(concertService.list(null, null, region, genre, type, saleStatus, null, null, q, null,
-                page, pageSize.resolve(size)));
+                                                          @RequestParam(required = false) Integer size,
+                                                          @RequestHeader(value = CurrentUserArgumentResolver.HEADER, required = false) Long userId) {
+        PageResult<ConcertSummary> result = concertService.list(null, null, region, genre, type, saleStatus, null, null, q, null,
+                page, pageSize.resolve(size));
+        userMetrics.searched(userId, q, page);
+        return ApiResponse.onSuccess(result);
     }
 
     @GetMapping("/api/concerts/{id}")
