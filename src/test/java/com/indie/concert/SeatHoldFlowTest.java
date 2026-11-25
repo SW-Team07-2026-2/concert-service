@@ -94,7 +94,7 @@ class SeatHoldFlowTest {
 
     private static final ConcertProperties PROPS = new ConcertProperties(null, null, null, "Asia/Seoul",
             new ConcertProperties.Booking(7, 179, 60, 24, 30000),
-            new ConcertProperties.Queue(20, 1000, 200, 5000, 1000, 15, 7, 2000, 3000, 5000),
+            new ConcertProperties.Queue(20, 1000, 200, 5000, 1000, 15, 7, 2000, 15000, 3000, 5000),
             null, null, null, null, null);
 
     private static LettuceConnectionFactory redisFactory;
@@ -128,7 +128,7 @@ class SeatHoldFlowTest {
 
     @BeforeEach
     void wire() {
-        QueueService queue = new QueueService(queueStore, queueEntries, concerts, PROPS, new SimpleMeterRegistry(), Clock.systemUTC());
+        QueueService queue = new QueueService(queueStore, queueEntries, concerts, seats, PROPS, new SimpleMeterRegistry(), Clock.systemUTC());
         service = new BookingService(bookings, bookingSeats, seats, concerts, venues, new LineupReader(concertArtists), queue,
                 payment, mock(BookingEvents.class), tx, PROPS, Clock.systemUTC());
     }

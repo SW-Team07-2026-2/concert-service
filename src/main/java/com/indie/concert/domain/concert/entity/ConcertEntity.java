@@ -129,6 +129,11 @@ public class ConcertEntity {
 
     /** 공연 시작 이후 CLOSED · 오픈 시각 전(또는 미정) SCHEDULED · 그 사이 ON_SALE */
     public SaleStatus saleStatus(OffsetDateTime now) {
+        return saleStatus(startsAt, bookingOpenAt, now);
+    }
+
+    /** ✏️ 11/25 캐시에 둔 공연 값으로도 같은 규칙 — 캐시가 몇 초 묵어도 판매 상태는 요청 시각으로 계산합니다 */
+    public static SaleStatus saleStatus(OffsetDateTime startsAt, OffsetDateTime bookingOpenAt, OffsetDateTime now) {
         if (!now.isBefore(startsAt)) return SaleStatus.CLOSED;
         if (bookingOpenAt == null || now.isBefore(bookingOpenAt)) return SaleStatus.SCHEDULED;
         return SaleStatus.ON_SALE;

@@ -71,6 +71,18 @@ public interface ConcertSeatJpaRepository extends JpaRepository<ConcertSeatEntit
             """, nativeQuery = true)
     List<SeatMapRow> findSeatMap(@Param("concertId") long concertId);
 
+    /** 좌석 화면(findSeatMap)과 같은 상태 기준 — uq_concert_seat 로 이 공연 좌석만 셉니다 */
+    @Override
+    @Query(value = """
+            SELECT count(*) AS total,
+                   count(*) FILTER (WHERE cs.status <> 'SOLD') AS unsold,
+                   count(*) FILTER (WHERE cs.status NOT IN ('SOLD', 'PAYING')
+                                      AND NOT (cs.status = 'HELD' AND coalesce(cs.hold_expires_at > now(), false))) AS available
+            FROM concert_seat cs
+            WHERE cs.concert_id = :concertId
+            """, nativeQuery = true)
+    SeatCounts countSeats(@Param("concertId") long concertId);
+
     @Override
     @Query(value = """
             SELECT cs.id AS id, f.name AS floor, sc.name AS section, s.row_no AS rowNo, s.seat_no AS seatNo, cs.price AS price

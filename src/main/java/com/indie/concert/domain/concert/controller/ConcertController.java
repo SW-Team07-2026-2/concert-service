@@ -94,7 +94,7 @@ public class ConcertController {
 
     @GetMapping("/api/concerts/{id}")
     public ApiResponse<ConcertDetail> get(@PathVariable @Positive long id) {
-        return ApiResponse.onSuccess(concertService.get(id));
+        return ApiResponse.onSuccess(concertService.getPublic(id));   // ✏️ 11/25 3초 캐시
     }
 
     /** 공연 변경 공지 — 최신순 (11/18) */
