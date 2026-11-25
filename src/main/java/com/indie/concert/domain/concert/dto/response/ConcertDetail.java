@@ -7,4 +7,11 @@ import java.util.List;
 public record ConcertDetail(long id, String title, String type, String genre, List<ArtistRef> artists,
                             OffsetDateTime startsAt, OffsetDateTime endsAt, Integer price, String saleStatus,
                             OffsetDateTime bookingOpenAt, boolean queueEnabled, int maxSeatsPerUser, VenueView venue,
-                            String description, String terms, String requirements, String posterUrl, List<String> imageUrls) {}
+                            String description, String terms, String requirements, String posterUrl, List<String> imageUrls) {
+
+    /** 캐시에 둔 상세의 판매 상태만 요청 시각 기준으로 바꿉니다 (ConcertService.getPublic) */
+    public ConcertDetail withSaleStatus(String saleStatus) {
+        return new ConcertDetail(id, title, type, genre, artists, startsAt, endsAt, price, saleStatus, bookingOpenAt, queueEnabled,
+                maxSeatsPerUser, venue, description, terms, requirements, posterUrl, imageUrls);
+    }
+}

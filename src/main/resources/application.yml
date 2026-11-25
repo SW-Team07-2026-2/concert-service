@@ -104,9 +104,10 @@ app:
     max-pops-per-tick: 200                    # 이탈자(하트비트 없음)를 건너뛰며 꺼내는 상한
     snapshot-interval-ms: 5000                # 16 §1 — 5초 증분 배치 INSERT
     snapshot-batch: 1000
-    alive-ttl-seconds: 15                     # FR-CON-24 — 15초 폴링이 없으면 이탈
+    alive-ttl-seconds: 45                     # FR-CON-24 — 이 시간 폴링이 없으면 이탈 · ✏️ 11/25 15 → 45 (가장 긴 조회 간격 15초를 3번 놓치면)
     entry-ttl-minutes: 7                      # FR-CON-20 — 입장 토큰 7분 = 화면 시계 (hold-minutes 이하)
-    poll-after-ms: 2000
+    poll-after-ms: 2000                       # 순번 조회 간격 — 가장 짧을 때 (입장이 가까운 사람)
+    poll-max-ms: 15000                        # ✏️ 11/25 k6 — 순번이 멀수록 길게 (예상 대기의 1/3 · 이 값까지). 모두 2초면 1만 명이 초당 5,000건
     degraded-poll-after-ms: 3000
     leader-ttl-ms: 5000                       # 08 §8.2 — 입장 처리기 리더 락 TTL 5초
   page:

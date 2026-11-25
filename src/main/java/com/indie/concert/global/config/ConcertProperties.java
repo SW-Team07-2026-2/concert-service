@@ -23,7 +23,7 @@ public record ConcertProperties(Internal internal, InternalToken internalToken, 
                           long expiryIntervalMs) {}
 
     public record Queue(int admitBatch, long admitIntervalMs, int maxPopsPerTick, long snapshotIntervalMs, int snapshotBatch,
-                        long aliveTtlSeconds, long entryTtlMinutes, long pollAfterMs, long degradedPollAfterMs,
+                        long aliveTtlSeconds, long entryTtlMinutes, long pollAfterMs, long pollMaxMs, long degradedPollAfterMs,
                         long leaderTtlMs) {}
 
     public record Page(int size, int maxSize) {}

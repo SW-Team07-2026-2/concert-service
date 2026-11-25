@@ -1,5 +1,9 @@
 package com.indie.concert.domain.concert.service;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import com.indie.concert.domain.concert.dto.response.ConcertSummary;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
 import com.indie.concert.domain.concert.entity.Region;
@@ -49,6 +53,38 @@ class ConcertServiceTest {
 
         assertThat(items).extracting(ConcertSummary::id).containsExactly(1L, 2L);
         assertThat(items).extracting(ConcertSummary::posterUrl).containsExactly(POSTER, null);
+    }
+
+    /** ✏️ 11/25 공개 상세는 3초 캐시 — DB 는 한 번만 · 오픈 시각이 지나면 캐시 안에서도 판매 상태는 바로 ON_SALE */
+    @Test
+    void publicDetailIsCachedButSaleStatusFollowsClock() {
+        MovableClock clock = new MovableClock(NOW.toInstant());
+        ConcertService cached = new ConcertService(concerts, venues, lineups,
+                new ConcertProperties(null, null, null, "Asia/Seoul", null, null, null, null, null, null, null), clock);
+        ConcertEntity c = new ConcertEntity(7L, "공연 1", ConcertEntity.Type.SOLO, "INDIE_ROCK", STARTS, null, 55000,
+                NOW.plusSeconds(1), true, 4, null, null, NOW);
+        ReflectionTestUtils.setField(c, "id", 1L);
+        VenueEntity venue = new VenueEntity("공연장", Region.SEOUL, null, 100);
+        ReflectionTestUtils.setField(venue, "id", 7L);
+        when(concerts.findById(1L)).thenReturn(java.util.Optional.of(c));
+        when(venues.findById(7L)).thenReturn(java.util.Optional.of(venue));
+
+        assertThat(cached.getPublic(1L).saleStatus()).isEqualTo("SCHEDULED");
+        clock.now = NOW.plusSeconds(2).toInstant();
+        assertThat(cached.getPublic(1L).saleStatus()).isEqualTo("ON_SALE");
+        assertThat(cached.getPublic(1L).title()).isEqualTo("공연 1");
+
+        verify(concerts, times(1)).findById(1L);
+    }
+
+    private static final class MovableClock extends Clock {
+        Instant now;
+
+        MovableClock(Instant now) { this.now = now; }
+
+        @Override public ZoneId getZone() { return ZoneOffset.UTC; }
+        @Override public Clock withZone(ZoneId zone) { return this; }
+        @Override public Instant instant() { return now; }
     }
 
     private static ConcertEntity concert(long id, String posterUrl) {

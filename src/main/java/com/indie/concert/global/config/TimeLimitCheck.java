@@ -32,10 +32,14 @@ public class TimeLimitCheck {
         require(queue.leaderTtlMs() > queue.admitIntervalMs(),
                 "입장 처리기 리더 락(leader-ttl-ms = %d)은 입장 주기(admit-interval-ms = %d)보다 길어야 합니다",
                 queue.leaderTtlMs(), queue.admitIntervalMs());
-        long slowestPollMs = Math.max(queue.pollAfterMs(), queue.degradedPollAfterMs());
-        require(queue.aliveTtlSeconds() * 1000 > slowestPollMs,
-                "대기 생존 TTL(alive-ttl-seconds = %d)은 폴링 간격(최대 %dms)보다 길어야 합니다 — 기다리는 사람이 이탈 처리됨",
+        // ✏️ 11/25 순번이 멀면 poll-max-ms 까지 늘어납니다 — 응답이 늦거나 한 번 실패해도 이탈 처리되지 않게 3번 몫
+        long slowestPollMs = Math.max(queue.pollMaxMs(), queue.degradedPollAfterMs());
+        require(queue.aliveTtlSeconds() * 1000 >= 3 * slowestPollMs,
+                "대기 생존 TTL(alive-ttl-seconds = %d)은 가장 긴 폴링 간격(%dms)의 3배 이상이어야 합니다 — 기다리는 사람이 이탈 처리됨",
                 queue.aliveTtlSeconds(), slowestPollMs);
+        require(queue.pollMaxMs() >= queue.pollAfterMs(),
+                "가장 긴 조회 간격(poll-max-ms = %d)은 가장 짧은 간격(poll-after-ms = %d)보다 짧을 수 없습니다",
+                queue.pollMaxMs(), queue.pollAfterMs());
     }
 
     private static void require(boolean ok, String message, Object... args) {

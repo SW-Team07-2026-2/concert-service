@@ -40,7 +40,7 @@ class RedisQueueStoreTest {
         factory.start();
         redis = new StringRedisTemplate(factory);
         ConcertProperties props = new ConcertProperties(null, null, null, null, null,
-                new ConcertProperties.Queue(20, 1000, 200, 5000, 1000, 15, 10, 2000, 3000, 5000), null, null, null, null, null);
+                new ConcertProperties.Queue(20, 1000, 200, 5000, 1000, 15, 10, 2000, 15000, 3000, 5000), null, null, null, null, null);
         store = new RedisQueueStore(redis, props);
     }
 

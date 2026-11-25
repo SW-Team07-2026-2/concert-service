@@ -38,6 +38,15 @@ public interface ConcertSeatRepository {
     /** 좌석 화면 — 이 공연에서 파는 좌석 (위치 + 가격 + 화면 상태). 상태는 DB now() 로 계산합니다 */
     List<SeatMapRow> findSeatMap(long concertId);
 
+    /** ✏️ 11/25 대기열 — 좌석 수 · 결제 안 된 좌석 수 · 지금 고를 수 있는 좌석 수 (좌석 화면과 같은 기준 · DB now()) */
+    SeatCounts countSeats(long concertId);
+
+    interface SeatCounts {
+        long getTotal();
+        long getUnsold();
+        long getAvailable();
+    }
+
     /** 예매 상세 · 검표 — 공연 좌석의 층 · 구역 · 열 · 번호 · 가격 (층 · 구역 · 열 · 번호 순) */
     List<SeatRefRow> findRefs(Collection<Long> concertSeatIds);
 
