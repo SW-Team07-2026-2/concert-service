@@ -3,6 +3,8 @@ package com.indie.concert.domain.seat.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
 import com.indie.concert.domain.layout.repository.LayoutRepository;
@@ -24,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -57,6 +60,14 @@ public class SeatService {
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
+    /**
+     * ✏️ 11/25 k6 3,000명 — 좌석 화면 요청마다 325KB 를 캐시 Redis 에서 객체로 풀고 다시 JSON 으로 만들어 concert CPU 스로틀 ·
+     * GC 멈춤(최대 459ms) · 메모리(96%)의 주원인이었습니다. 응답 본문(타이머 없는 JSON 바이트)을 Pod 메모리에 1초 둡니다 —
+     * 비면 한 요청만 만들고 나머지는 그 결과를 기다립니다. 배치 · 상태는 최대 약 3초 늦을 수 있습니다 (캐시 Redis 2초 + 1초 · 선점은 서버가 다시 확인)
+     */
+    private final Cache<Long, SeatMapBody> bodies = Caffeine.newBuilder()
+            .expireAfterWrite(Duration.ofSeconds(1)).maximumSize(100).build();
+
     public SeatService(ConcertRepository concertRepository, ConcertSeatRepository concertSeatRepository,
                        LayoutRepository layoutRepository, SeatCache seatCache, QueueService queueService,
                        ObjectMapper objectMapper, Clock clock) {
@@ -70,13 +81,18 @@ public class SeatService {
     }
 
     /**
-     * 좌석 화면 — 배치 · 상태는 캐시(2초), 타이머는 요청마다. 누가 잡았는지는 내보내지 않습니다.
+     * 좌석 화면 — 응답 본문(ApiResponse JSON). 배치 · 상태는 캐시, 타이머는 요청마다. 누가 잡았는지는 내보내지 않습니다.
      * 입장 토큰을 보내면 먼저 확인합니다 (만료 · 다른 토큰이면 대기열로 돌려보냄). 안 보내면 타이머 없이 배치만 (대기열을 끈 공연)
      */
-    public SeatMap seats(long concertId, long userId, String entryToken) {
+    public byte[] seatsJson(long concertId, long userId, String entryToken) {
         Long left = entryToken == null || entryToken.isBlank() ? null : queueService.entryLeft(concertId, userId, entryToken);
-        SeatMap map = seatCache.get(concertId).orElseGet(() -> load(concertId));
-        return left == null ? map : map.withTimer(OffsetDateTime.now(clock).plusSeconds(left), left);
+        SeatMapBody body = bodies.get(concertId, id -> SeatMapBody.of(objectMapper, map(id)));
+        return left == null ? body.json() : body.withTimer(objectMapper, OffsetDateTime.now(clock).plusSeconds(left), left);
+    }
+
+    /** 배치 · 상태 (타이머 없음) — 캐시 Redis 2초 · 비면 DB */
+    SeatMap map(long concertId) {
+        return seatCache.get(concertId).orElseGet(() -> load(concertId));
     }
 
     /**

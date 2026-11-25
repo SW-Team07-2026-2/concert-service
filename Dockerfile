@@ -16,9 +16,12 @@ COPY --from=build /app/build/libs/*.jar app.jar
 USER app
 EXPOSE 8083 8093
 # MaxMetaspaceSize 160m — JPA 가 Gateway 보다 클래스를 많이 씁니다
+# ✏️ 11/25 k6 3,000명 — SerialGC(GC 스레드 1개) 멈춤 최대 459ms 동안 Redis 명령이 시간 초과 (대기열 degraded · 503)
+#   → ParallelGC: CPU 한도만큼 스레드로 나눠 짧게 (Gateway 는 472ms → 수십 ms 확인). CPU 한도 1코어 이하(AWS)면 SerialGC 와 같습니다
+#   GC 는 JAVA_TOOL_OPTIONS 로 못 바꿉니다 — 여기 플래그가 뒤에 와서 두 GC 가 함께 켜져 기동 실패
 ENTRYPOINT ["java", \
   "-XX:MaxRAMPercentage=70", \
-  "-XX:+UseSerialGC", \
+  "-XX:+UseParallelGC", \
   "-XX:MaxMetaspaceSize=160m", \
   "-Duser.timezone=Asia/Seoul", \
   "-Dfile.encoding=UTF-8", \
