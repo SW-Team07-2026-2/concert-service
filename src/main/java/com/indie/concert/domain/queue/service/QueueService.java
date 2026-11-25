@@ -9,9 +9,12 @@ import com.indie.concert.domain.queue.entity.QueueMember;
 import com.indie.concert.domain.queue.exception.QueueErrorCode;
 import com.indie.concert.domain.queue.repository.QueueEntryRepository;
 import com.indie.concert.domain.queue.repository.QueueStore;
+import com.indie.concert.domain.seat.repository.ConcertSeatRepository;
 import com.indie.concert.global.common.exception.CommonErrorCode;
 import com.indie.concert.global.common.exception.GeneralException;
 import com.indie.concert.global.config.ConcertProperties;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
@@ -36,7 +39,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * 대기열 (N4 ~ N6 · i1 · i2 · 16_대기열_Redis_운영). 원칙 — "Redis 를 안 죽게"보다 "죽어도 복구되게".
  * <pre>
- * 진입 · 조회   Redis 만             응답 경로에 DB 없음
+ * 진입 · 조회   Redis 만             응답 경로에 DB 없음 — ✏️ 11/25 공연 판매 값 · 남은 좌석 수는 Pod 메모리 3초 (몰릴 때 DB 는 3초에 1번)
  * 입장 처리     1초 · 리더 하나        ZPOPMIN N → 입장 토큰 7분 → DB 즉시 반영
  * 스냅샷        5초 · 증분 배치        Redis → queue_entry
  * 복구          센티넬이 없으면        queue_entry → ZADD (순서 그대로) + 입장 토큰 (남은 시간만큼) · 다른 replica 가 복구 중이면 DB COUNT 로 degraded
@@ -52,39 +55,68 @@ public class QueueService {
     private final QueueStore store;
     private final QueueEntryRepository entries;
     private final ConcertRepository concertRepository;
+    private final ConcertSeatRepository concertSeatRepository;
     private final ConcertProperties.Queue props;
     private final Timer rebuildTimer;
     private final Clock clock;
     private final String instanceId = UUID.randomUUID().toString();
 
+    /**
+     * ✏️ 11/25 k6 3,000명 — 2초 폴링마다 공연을 DB 에서 읽어 초당 약 1,500번 · DB 풀 대기 155번.
+     * 판매 값 · 남은 좌석 수는 Pod 메모리에 3초 둡니다 (캐시가 비면 한 요청만 DB 로 · 나머지는 그 결과를 기다림). 판매 상태는 요청 시각으로 다시 계산
+     */
+    private static final Duration SNAPSHOT_TTL = Duration.ofSeconds(3);
+    private final Cache<Long, Sale> sales = Caffeine.newBuilder().expireAfterWrite(SNAPSHOT_TTL).maximumSize(1_000).build();
+    private final Cache<Long, Seats> seats = Caffeine.newBuilder().expireAfterWrite(SNAPSHOT_TTL).maximumSize(1_000).build();
+
+    /** 공연에서 대기열이 쓰는 값만 — JPA 엔티티를 스레드 사이에 공유하지 않게 */
+    private record Sale(boolean queueEnabled, OffsetDateTime startsAt, OffsetDateTime bookingOpenAt) {
+        static Sale of(ConcertEntity c) {
+            return new Sale(c.isQueueEnabled(), c.getStartsAt(), c.getBookingOpenAt());
+        }
+
+        ConcertEntity.SaleStatus status(OffsetDateTime now) {
+            return ConcertEntity.saleStatus(startsAt, bookingOpenAt, now);
+        }
+    }
+
+    /** 좌석을 아직 안 올린 공연(total 0)은 매진 · 입장 멈춤으로 보지 않습니다 — 예전처럼 들어갑니다 */
+    private record Seats(long total, long unsold, long available) {
+        boolean soldOut() { return total > 0 && unsold == 0; }
+        boolean noneToPick() { return total > 0 && available == 0; }
+    }
+
     public QueueService(QueueStore store, QueueEntryRepository entries, ConcertRepository concertRepository,
-                        ConcertProperties props, MeterRegistry meterRegistry, Clock clock) {
+                        ConcertSeatRepository concertSeatRepository, ConcertProperties props, MeterRegistry meterRegistry,
+                        Clock clock) {
         this.store = store;
         this.entries = entries;
         this.concertRepository = concertRepository;
+        this.concertSeatRepository = concertSeatRepository;
         this.props = props.queue();
         this.rebuildTimer = Timer.builder("queue.rebuild").description("대기열 재구성 소요 (16 §8)").register(meterRegistry);
         this.clock = clock;
     }
 
-    /** N4 — 진입. 이미 대기 중이면 409 + 지금 순번 (순번은 그대로 유지) */
+    /** N4 — 진입. 이미 대기 중이면 409 + 지금 순번 (순번은 그대로 유지) · ✏️ 11/25 매진이면 410 SOLD_OUT (줄을 세우지 않음) */
     public QueueStatus enter(long concertId, long userId) {
-        ConcertEntity concert = queueConcert(concertId);
-        switch (concert.saleStatus(now())) {
+        Sale sale = queueSale(concertId);
+        switch (sale.status(now())) {
             case SCHEDULED -> throw new GeneralException(QueueErrorCode.QUEUE_NOT_OPEN);
             case CLOSED -> throw closed();
             case ON_SALE -> { }
         }
+        if (seats(concertId).soldOut()) throw new GeneralException(QueueErrorCode.SOLD_OUT);
         QueueStore.Entered entered;
         try {
-            if (!store.isReady(concertId) && !rebuild(concert, false)) throw unavailable();
-            entered = store.enter(concertId, userId, expireAt(concert));
+            if (!store.isReady(concertId) && !rebuild(concertId, sale.startsAt(), false)) throw unavailable();
+            entered = store.enter(concertId, userId, expireAt(sale.startsAt()));
         } catch (QueueStore.Unavailable e) {
             log.warn("queue_enter_unavailable concertId={} error={}", concertId, e.getMessage());
             throw unavailable();
         }
         return switch (entered.result()) {
-            case ENTERED -> waiting(entered.rank() + 1, entered.total(), false);
+            case ENTERED -> waiting(concertId, entered.rank() + 1, entered.total());
             case ALREADY_WAITING -> throw new GeneralException(QueueErrorCode.ALREADY_IN_QUEUE)
                     .with("rank", entered.rank() + 1);
             case ALREADY_ADMITTED -> throw new GeneralException(QueueErrorCode.ALREADY_IN_QUEUE, "이미 입장했습니다 — 순번 조회로 입장 토큰을 받으세요")
@@ -93,17 +125,18 @@ public class QueueService {
     }
 
     /**
-     * N5 — 순번 조회 (2초 폴링) + 생존 신호. 🔴 복구 중에도 503 을 내지 않습니다 — DB 로 순번을 계산해 degraded 로 내려줍니다.
-     * 프론트는 degraded 면 pollAfterMs 대로 다시 부르기만 하면 됩니다 (15 §4).
+     * N5 — 순번 조회 (pollAfterMs 간격 · ✏️ 11/25 순번이 멀수록 2 → 15초) + 생존 신호. 🔴 복구 중에도 503 을 내지 않습니다 — DB 로 순번을 계산해 degraded 로 내려줍니다.
+     * 프론트는 degraded 면 pollAfterMs 대로 다시 부르기만 하면 됩니다 (15 §4). ✏️ 11/25 기다리는 중에 매진되면 SOLD_OUT — 조회를 멈춥니다
      */
     public QueueStatus status(long concertId, long userId) {
-        ConcertEntity concert = queueConcert(concertId);
+        Sale sale = queueSale(concertId);
         try {
-            if (!store.isReady(concertId) && !rebuild(concert, false)) return degraded(concertId, userId);
+            if (!store.isReady(concertId) && !rebuild(concertId, sale.startsAt(), false)) return degraded(concertId, userId);
             OptionalLong rank = store.rank(concertId, userId);
             if (rank.isPresent()) {
+                if (seats(concertId).soldOut()) return SOLD_OUT;
                 store.heartbeat(concertId, userId);
-                return waiting(rank.getAsLong() + 1, store.size(concertId), false);
+                return waiting(concertId, rank.getAsLong() + 1, store.size(concertId));
             }
             Optional<QueueStore.Entry> entry = store.entry(concertId, userId);
             if (entry.isPresent()) {
@@ -167,12 +200,17 @@ public class QueueService {
         return entry.get().ttlSeconds();
     }
 
-    /** 입장 처리 (1초) — 리더만. 센티넬이 없으면 여기서도 복구합니다 (아무도 폴링하지 않아도 복구되게) */
+    /**
+     * 입장 처리 (1초) — 리더만. 센티넬이 없으면 여기서도 복구합니다 (아무도 폴링하지 않아도 복구되게).
+     * ✏️ 11/25 지금 고를 좌석이 없으면(전부 선점 · 결제 중 · 판매) 입장을 멈춥니다 — 들여보내도 빈 좌석 화면에서 7분 시계만 흐릅니다.
+     * 선점이 풀리면 줄 순서대로 다시 들어갑니다
+     */
     public void admit(ConcertEntity concert) {
         long concertId = concert.getId();
         try {
             if (!store.lead(concertId, instanceId)) return;
-            if (!store.isReady(concertId) && !rebuild(concert, false)) return;
+            if (!store.isReady(concertId) && !rebuild(concertId, concert.getStartsAt(), false)) return;
+            if (seats(concertId).noneToPick()) return;
             List<String> tokens = new ArrayList<>(props.admitBatch());
             for (int i = 0; i < props.admitBatch(); i++) tokens.add(newToken());
             QueueStore.Admission admission = store.admit(concertId, tokens, props.maxPopsPerTick());
@@ -198,7 +236,7 @@ public class QueueService {
                 if (batch.isEmpty()) return;
                 entries.upsertWaiting(concertId, batch);
                 last = batch.get(batch.size() - 1).seq();
-                store.saveSnapshotSeq(concertId, last, expireAt(concert));
+                store.saveSnapshotSeq(concertId, last, expireAt(concert.getStartsAt()));
                 if (batch.size() < props.snapshotBatch()) return;
             }
         } catch (QueueStore.Unavailable e) {
@@ -212,7 +250,7 @@ public class QueueService {
         long started = System.nanoTime();
         boolean rebuilt;
         try {
-            rebuilt = rebuild(concert, true);
+            rebuilt = rebuild(concert.getId(), concert.getStartsAt(), true);
         } catch (QueueStore.Unavailable e) {
             throw unavailable();
         }
@@ -240,8 +278,7 @@ public class QueueService {
      * seq 도 DB 의 최댓값 이상으로 되돌립니다 — 안 하면 복구 직후 진입자가 기존 대기자보다 앞 번호를 받습니다.
      * 입장 토큰도 되살립니다 (10/24) — 안 하면 좌석을 고르던 사람(최대 초당 입장 수 × 7분)이 전부 다시 줄을 섭니다.
      */
-    private boolean rebuild(ConcertEntity concert, boolean force) {
-        long concertId = concert.getId();
+    private boolean rebuild(long concertId, OffsetDateTime startsAt, boolean force) {
         String lock = store.lockRebuild(concertId);
         if (lock == null) return false;
         long started = System.nanoTime();
@@ -252,12 +289,12 @@ public class QueueService {
             while (true) {
                 List<QueueMember> batch = entries.findWaitingAfter(concertId, last, props.snapshotBatch());
                 if (batch.isEmpty()) break;
-                store.restore(concertId, batch, expireAt(concert));
+                store.restore(concertId, batch, expireAt(startsAt));
                 restored += batch.size();
                 last = batch.get(batch.size() - 1).seq();
             }
             int tokens = restoreEntryTokens(concertId);
-            store.markReady(concertId, entries.maxSeq(concertId), expireAt(concert));
+            store.markReady(concertId, entries.maxSeq(concertId), expireAt(startsAt));
             log.info("queue_rebuilt concertId={} restored={} entryTokens={} force={}", concertId, restored, tokens, force);
             return true;
         } finally {
@@ -295,18 +332,35 @@ public class QueueService {
         };
     }
 
-    private ConcertEntity queueConcert(long concertId) {
-        ConcertEntity concert = concertRepository.findById(concertId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
-        if (!concert.isQueueEnabled()) {
+    private Sale queueSale(long concertId) {
+        Sale sale = sales.get(concertId, id -> concertRepository.findById(id).map(Sale::of).orElse(null));   // 없으면 캐시하지 않음
+        if (sale == null) throw new GeneralException(CommonErrorCode.NOT_FOUND);
+        if (!sale.queueEnabled()) {
             throw new GeneralException(QueueErrorCode.QUEUE_DISABLED);
         }
-        return concert;
+        return sale;
     }
 
-    private QueueStatus waiting(long rank, long total, boolean degraded) {
-        return new QueueStatus("WAITING", rank, total, eta(rank), degraded ? props.degradedPollAfterMs() : props.pollAfterMs(),
-                degraded ? true : null, null, null);
+    private Seats seats(long concertId) {
+        return seats.get(concertId, id -> {
+            ConcertSeatRepository.SeatCounts c = concertSeatRepository.countSeats(id);
+            return new Seats(c.getTotal(), c.getUnsold(), c.getAvailable());
+        });
     }
+
+    /** 고를 좌석이 없어 입장이 멈춘 동안은 가장 긴 간격으로 — 순번이 움직이지 않습니다 */
+    private QueueStatus waiting(long concertId, long rank, long total) {
+        long eta = eta(rank);
+        long poll = seats(concertId).noneToPick() ? props.pollMaxMs() : pollAfter(eta);
+        return new QueueStatus("WAITING", rank, total, eta, poll, null, null, null);
+    }
+
+    /** ✏️ 11/25 순번이 멀수록 천천히 — 예상 대기의 1/3 (입장 전에 3번은 다시 묻게) · poll-after-ms ~ poll-max-ms */
+    private long pollAfter(long etaSeconds) {
+        return Math.max(props.pollAfterMs(), Math.min(props.pollMaxMs(), etaSeconds * 1000 / 3));
+    }
+
+    private static final QueueStatus SOLD_OUT = new QueueStatus("SOLD_OUT", null, null, null, null, null, null, null);
 
     private static QueueStatus expired() {
         return new QueueStatus("EXPIRED", null, null, null, null, null, null, null);
@@ -317,8 +371,8 @@ public class QueueService {
         return (long) Math.ceil(rank * (double) props.admitIntervalMs() / (props.admitBatch() * 1000.0));
     }
 
-    private Instant expireAt(ConcertEntity concert) {
-        return concert.getStartsAt().plusDays(1).toInstant();   // 16 §4 — 공연 종료 + 1일
+    private static Instant expireAt(OffsetDateTime startsAt) {
+        return startsAt.plusDays(1).toInstant();   // 16 §4 — 공연 종료 + 1일
     }
 
     private OffsetDateTime now() {

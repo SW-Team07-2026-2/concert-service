@@ -1,5 +1,7 @@
 package com.indie.concert.domain.concert.service;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.indie.concert.domain.concert.dto.response.ArtistRef;
 import com.indie.concert.domain.concert.dto.response.CalendarDay;
 import com.indie.concert.domain.concert.dto.response.ConcertCalendar;
@@ -24,6 +26,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.YearMonth;
@@ -54,6 +57,14 @@ public class ConcertService {
     private final LineupReader lineupReader;
     private final ZoneId zone;
     private final Clock clock;
+
+    /**
+     * ✏️ 11/25 k6 — 공개 공연 상세(N2)는 오픈 직후 모두가 부르고 요청마다 DB 를 3번 넘게 읽습니다 (공연 · 공연장 · 라인업).
+     * 누구에게나 같은 응답이라 Pod 메모리에 3초 둡니다 — 캐시가 비면 한 요청만 DB 로, 나머지는 그 결과를 기다립니다.
+     * 관리자 수정은 최대 3초 늦게 보입니다 (관리자 응답은 get 으로 바로 읽음)
+     */
+    private final Cache<Long, ConcertDetail> details = Caffeine.newBuilder()
+            .expireAfterWrite(Duration.ofSeconds(3)).maximumSize(1_000).build();
 
     public ConcertService(ConcertRepository concertRepository, VenueRepository venueRepository, LineupReader lineupReader,
                           ConcertProperties props, Clock clock) {
@@ -107,6 +118,13 @@ public class ConcertService {
             throw new GeneralException(CommonErrorCode.INVALID_REQUEST, "sort=ARTIST_ORDER 는 artistIds 가 필요합니다");
         }
         return ids;
+    }
+
+    /** N2 공개 — get 을 3초 캐시. 판매 상태는 요청 시각으로 다시 계산합니다 (오픈 시각이 지나면 캐시와 상관없이 바로 ON_SALE) */
+    public ConcertDetail getPublic(long id) {
+        ConcertDetail d = details.get(id, this::get);
+        String status = ConcertEntity.saleStatus(d.startsAt(), d.bookingOpenAt(), OffsetDateTime.now(clock)).name();
+        return status.equals(d.saleStatus()) ? d : d.withSaleStatus(status);
     }
 
     /** N2 — 공연 상세 + 공연장 + 판매 상태 + 예매 오픈 시각 (08 §7) */

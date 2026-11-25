@@ -12,14 +12,14 @@ class TimeLimitCheckTest {
                                    long admitIntervalMs, long leaderTtlMs, long aliveTtlSeconds, long degradedPollAfterMs) {
         return new ConcertProperties(null, null, null, "Asia/Seoul",
                 new ConcertProperties.Booking(holdMinutes, holdGraceSeconds, 60, cancelDeadlineHours, 30000),
-                new ConcertProperties.Queue(20, admitIntervalMs, 200, 5000, 1000, aliveTtlSeconds, 7, 2000, degradedPollAfterMs, leaderTtlMs),
+                new ConcertProperties.Queue(20, admitIntervalMs, 200, 5000, 1000, aliveTtlSeconds, 7, 2000, 15000, degradedPollAfterMs, leaderTtlMs),
                 null, null, null, null,
                 new ConcertProperties.Entry(30, openBeforeHours, 6));
     }
 
     @Test
     void currentSettingsPass() {
-        assertThatCode(() -> TimeLimitCheck.check(props(7, 179, 24, 3, 1000, 5000, 15, 3000))).doesNotThrowAnyException();
+        assertThatCode(() -> TimeLimitCheck.check(props(7, 179, 24, 3, 1000, 5000, 45, 3000))).doesNotThrowAnyException();
     }
 
     @Test
@@ -49,6 +49,13 @@ class TimeLimitCheckTest {
     @Test
     void aliveTtlShorterThanDegradedPollFails() {
         assertThatThrownBy(() -> TimeLimitCheck.check(props(7, 179, 24, 3, 1000, 5000, 3, 3000)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("alive-ttl-seconds");
+    }
+
+    /** ✏️ 11/25 — 가장 긴 조회 간격 15초를 3번 놓칠 시간(45초)보다 짧으면 기동 실패 */
+    @Test
+    void aliveTtlShorterThanThreeSlowestPollsFails() {
+        assertThatThrownBy(() -> TimeLimitCheck.check(props(7, 179, 24, 3, 1000, 5000, 44, 3000)))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("alive-ttl-seconds");
     }
 }
