@@ -1,16 +1,22 @@
 package com.indie.concert.domain.seat.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
 import com.indie.concert.domain.layout.repository.LayoutRepository;
 import com.indie.concert.domain.queue.exception.QueueErrorCode;
 import com.indie.concert.domain.queue.service.QueueService;
+import com.indie.concert.domain.seat.dto.response.FloorView;
 import com.indie.concert.domain.seat.dto.response.SeatMap;
+import com.indie.concert.domain.seat.dto.response.SeatView;
+import com.indie.concert.domain.seat.dto.response.SectionView;
 import com.indie.concert.domain.seat.repository.ConcertSeatRepository;
 import com.indie.concert.domain.seat.repository.SeatCache;
 import com.indie.concert.global.common.exception.GeneralException;
+import com.indie.concert.global.common.response.ApiResponse;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -27,45 +33,72 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 좌석 화면 — 배치 · 상태는 2초 캐시, 타이머(입장 토큰 남은 시간)는 요청마다 계산해 캐시에 섞이지 않습니다 */
+/** 좌석 화면 — 배치 · 상태는 캐시, 타이머(입장 토큰 남은 시간)는 요청마다 계산해 캐시에 섞이지 않습니다 */
 class SeatServiceTest {
 
     private static final Instant NOW = Instant.parse("2026-11-13T10:00:00Z");
+    private static final ObjectMapper JSON = Jackson2ObjectMapperBuilder.json().build();   // 스프링이 응답에 쓰는 것과 같은 설정
 
     private final ConcertRepository concerts = mock(ConcertRepository.class);
     private final ConcertSeatRepository seats = mock(ConcertSeatRepository.class);
     private final LayoutRepository layout = mock(LayoutRepository.class);
     private final SeatCache cache = mock(SeatCache.class);
     private final QueueService queue = mock(QueueService.class);
-    private final SeatService service = new SeatService(concerts, seats, layout, cache, queue, new ObjectMapper(),
+    private final SeatService service = new SeatService(concerts, seats, layout, cache, queue, JSON,
             Clock.fixed(NOW, ZoneOffset.UTC));
 
-    private static final SeatMap CACHED = new SeatMap(1L, 4, 0, 0, null, null, List.of());
+    private static final SeatMap CACHED = new SeatMap(1L, 4, 2, 1, null, null, List.of(new FloorView(10L, "1층", List.of(
+            new SectionView(100L, "가 구역", List.of(List.of(new BigDecimal("0.1"), new BigDecimal("0.2"))), new BigDecimal("12.5"),
+                    List.of(new SeatView(1000L, 1, 1, new BigDecimal("0.15"), new BigDecimal("0.2"), BigDecimal.ZERO, 55000, "AVAILABLE"),
+                            new SeatView(1001L, 1, 2, new BigDecimal("0.16"), new BigDecimal("0.2"), BigDecimal.ZERO, 55000, "SOLD")))))));
 
-    /** 입장 토큰 남은 초를 그대로 — 프론트는 expiresIn 으로 타이머를 돌립니다 */
+    /** 입장 토큰 남은 초를 그대로 — 프론트는 expiresIn 으로 타이머를 돌립니다. 응답은 예전(Jackson 이 withTimer 를 직렬화)과 같은 JSON */
     @Test
-    void entryTokenGivesTimerAtCallTime() {
+    void entryTokenGivesTimerAtCallTime() throws Exception {
         when(cache.get(1L)).thenReturn(Optional.of(CACHED));
         when(queue.entryLeft(1L, 3L, "tok")).thenReturn(301L);
+        OffsetDateTime expiresAt = OffsetDateTime.ofInstant(NOW, ZoneOffset.UTC).plusSeconds(301);
 
-        SeatMap map = service.seats(1L, 3L, "tok");
+        JsonNode body = JSON.readTree(service.seatsJson(1L, 3L, "tok"));
 
-        assertThat(map.expiresIn()).isEqualTo(301L);
-        assertThat(map.expiresAt()).isEqualTo(OffsetDateTime.ofInstant(NOW, ZoneOffset.UTC).plusSeconds(301));
+        assertThat(body).isEqualTo(JSON.readTree(JSON.writeValueAsBytes(ApiResponse.onSuccess(CACHED.withTimer(expiresAt, 301)))));
+        assertThat(body.at("/result/expiresIn").asLong()).isEqualTo(301L);
         assertThat(CACHED.expiresIn()).isNull();   // 캐시 값에는 타이머가 없음 — 남의 타이머가 섞이지 않게
         verify(cache, never()).put(any());
     }
 
     /** 대기열을 끈 공연 — 토큰 없이 배치만 (타이머 없음) */
     @Test
-    void noTokenNoTimer() {
+    void noTokenNoTimer() throws Exception {
         when(cache.get(1L)).thenReturn(Optional.of(CACHED));
 
-        assertThat(service.seats(1L, 3L, null).expiresIn()).isNull();
+        JsonNode body = JSON.readTree(service.seatsJson(1L, 3L, null));
+
+        assertThat(body).isEqualTo(JSON.readTree(JSON.writeValueAsBytes(ApiResponse.onSuccess(CACHED))));
+        assertThat(body.at("/result").has("expiresIn")).isFalse();
         verify(queue, never()).entryLeft(anyLong(), anyLong(), anyString());
+    }
+
+    /** ✏️ 11/25 본문은 Pod 메모리에 1초 — 여러 사람이 불러도 한 번만 만들고, 타이머는 사람마다 따로 */
+    @Test
+    void bodyIsBuiltOnceAndTimersStayPerUser() throws Exception {
+        when(cache.get(1L)).thenReturn(Optional.of(CACHED));
+        when(queue.entryLeft(1L, 3L, "a")).thenReturn(300L);
+        when(queue.entryLeft(1L, 4L, "b")).thenReturn(120L);
+
+        JsonNode a = JSON.readTree(service.seatsJson(1L, 3L, "a"));
+        JsonNode b = JSON.readTree(service.seatsJson(1L, 4L, "b"));
+        JsonNode none = JSON.readTree(service.seatsJson(1L, 5L, null));
+
+        assertThat(a.at("/result/expiresIn").asLong()).isEqualTo(300L);
+        assertThat(b.at("/result/expiresIn").asLong()).isEqualTo(120L);
+        assertThat(none.at("/result").has("expiresIn")).isFalse();
+        assertThat(a.at("/result/floors")).isEqualTo(b.at("/result/floors"));
+        verify(cache, times(1)).get(1L);
     }
 
     /** 입장 시간이 지났으면 배치도 주지 않고 대기열 에러 — 프론트는 대기열로 돌아갑니다 */
@@ -73,7 +106,7 @@ class SeatServiceTest {
     void expiredTokenIsRejectedBeforeMap() {
         when(queue.entryLeft(1L, 3L, "old")).thenThrow(new GeneralException(QueueErrorCode.QUEUE_NOT_ADMITTED));
 
-        assertThatThrownBy(() -> service.seats(1L, 3L, "old"))
+        assertThatThrownBy(() -> service.seatsJson(1L, 3L, "old"))
                 .isInstanceOfSatisfying(GeneralException.class, e -> assertThat(e.getErrorCode().getCode()).isEqualTo("QUEUE_NOT_ADMITTED"));
         verify(cache, never()).get(anyLong());
     }
@@ -93,7 +126,7 @@ class SeatServiceTest {
         when(layout.findSections(5L)).thenReturn(sections);
         when(seats.findSeatMap(1L)).thenReturn(rows);
 
-        SeatMap map = service.seats(1L, 3L, null);
+        SeatMap map = service.map(1L);
 
         assertThat(map.maxSeatsPerUser()).isEqualTo(2);
         assertThat(map.total()).isEqualTo(3);
