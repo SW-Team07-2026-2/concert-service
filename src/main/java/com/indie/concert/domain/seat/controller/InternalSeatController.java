@@ -24,8 +24,8 @@ public class InternalSeatController {
         this.seatService = seatService;
     }
 
-    @PostMapping("/internal/admin/concerts/{id}/seats")
-    public ApiResponse<SeatPriced> price(@PathVariable @Positive long id, @Valid @RequestBody SeatPriceRequest request) {
-        return ApiResponse.onSuccess(seatService.price(id, request.seats()));
+    @PostMapping("/internal/admin/concerts/{concertId}/seats")
+    public ApiResponse<SeatPriced> price(@PathVariable @Positive long concertId, @Valid @RequestBody SeatPriceRequest request) {
+        return ApiResponse.onSuccess(seatService.price(concertId, request.seats()));
     }
 }

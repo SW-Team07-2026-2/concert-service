@@ -22,19 +22,19 @@ public class QueueController {
         this.queueService = queueService;
     }
 
-    @PostMapping("/api/concerts/{id}/queue")
-    public ApiResponse<QueueStatus> enter(@CurrentUser Long userId, @PathVariable @Positive long id) {
-        return ApiResponse.onSuccess(queueService.enter(id, userId));
+    @PostMapping("/api/concerts/{concertId}/queue")
+    public ApiResponse<QueueStatus> enter(@CurrentUser Long userId, @PathVariable @Positive long concertId) {
+        return ApiResponse.onSuccess(queueService.enter(concertId, userId));
     }
 
-    @GetMapping("/api/concerts/{id}/queue/status")
-    public ApiResponse<QueueStatus> status(@CurrentUser Long userId, @PathVariable @Positive long id) {
-        return ApiResponse.onSuccess(queueService.status(id, userId));
+    @GetMapping("/api/concerts/{concertId}/queue/status")
+    public ApiResponse<QueueStatus> status(@CurrentUser Long userId, @PathVariable @Positive long concertId) {
+        return ApiResponse.onSuccess(queueService.status(concertId, userId));
     }
 
-    @DeleteMapping("/api/concerts/{id}/queue")
-    public ResponseEntity<Void> leave(@CurrentUser Long userId, @PathVariable @Positive long id) {
-        queueService.leave(id, userId);
+    @DeleteMapping("/api/concerts/{concertId}/queue")
+    public ResponseEntity<Void> leave(@CurrentUser Long userId, @PathVariable @Positive long concertId) {
+        queueService.leave(concertId, userId);
         return ResponseEntity.noContent().build();
     }
 }

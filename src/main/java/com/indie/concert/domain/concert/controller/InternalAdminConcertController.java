@@ -50,38 +50,38 @@ public class InternalAdminConcertController {
         return ApiResponse.onSuccess(concertAdminService.create(request));
     }
 
-    @PatchMapping("/internal/admin/concerts/{id}")
-    public ApiResponse<ConcertDetail> update(@PathVariable @Positive long id, @Valid @RequestBody ConcertUpdateRequest request) {
-        return ApiResponse.onSuccess(concertAdminService.update(id, request));
+    @PatchMapping("/internal/admin/concerts/{concertId}")
+    public ApiResponse<ConcertDetail> update(@PathVariable @Positive long concertId, @Valid @RequestBody ConcertUpdateRequest request) {
+        return ApiResponse.onSuccess(concertAdminService.update(concertId, request));
     }
 
     /** 라인업 전체 교체 — 차례로 공개될 때마다 지금까지의 전체 목록을 보냅니다. 새로 추가된 아티스트의 팔로워에게 알림이 갑니다 */
-    @PutMapping("/internal/admin/concerts/{id}/lineup")
-    public ApiResponse<ConcertDetail> replaceLineup(@PathVariable @Positive long id, @Valid @RequestBody LineupRequest request) {
-        return ApiResponse.onSuccess(concertAdminService.replaceLineup(id, request.artistIds()));
+    @PutMapping("/internal/admin/concerts/{concertId}/lineup")
+    public ApiResponse<ConcertDetail> replaceLineup(@PathVariable @Positive long concertId, @Valid @RequestBody LineupRequest request) {
+        return ApiResponse.onSuccess(concertAdminService.replaceLineup(concertId, request.artistIds()));
     }
 
     // ── 공연 변경 공지 (11/18) — 새 공지만 알림 (라인업 팔로워 + 확정 예매자) ──
 
-    @GetMapping("/internal/admin/concerts/{id}/notices")
-    public ApiResponse<List<NoticeView>> notices(@PathVariable @Positive long id) {
-        return ApiResponse.onSuccess(noticeService.list(id));
+    @GetMapping("/internal/admin/concerts/{concertId}/notices")
+    public ApiResponse<List<NoticeView>> notices(@PathVariable @Positive long concertId) {
+        return ApiResponse.onSuccess(noticeService.list(concertId));
     }
 
-    @PostMapping("/internal/admin/concerts/{id}/notices")
-    public ApiResponse<NoticeView> createNotice(@PathVariable @Positive long id, @Valid @RequestBody NoticeCreateRequest request) {
-        return ApiResponse.onSuccess(noticeService.create(id, request));
+    @PostMapping("/internal/admin/concerts/{concertId}/notices")
+    public ApiResponse<NoticeView> createNotice(@PathVariable @Positive long concertId, @Valid @RequestBody NoticeCreateRequest request) {
+        return ApiResponse.onSuccess(noticeService.create(concertId, request));
     }
 
-    @PatchMapping("/internal/admin/concerts/{id}/notices/{noticeId}")
-    public ApiResponse<NoticeView> updateNotice(@PathVariable @Positive long id, @PathVariable @Positive long noticeId,
+    @PatchMapping("/internal/admin/concerts/{concertId}/notices/{noticeId}")
+    public ApiResponse<NoticeView> updateNotice(@PathVariable @Positive long concertId, @PathVariable @Positive long noticeId,
                                                 @Valid @RequestBody NoticeUpdateRequest request) {
-        return ApiResponse.onSuccess(noticeService.update(id, noticeId, request));
+        return ApiResponse.onSuccess(noticeService.update(concertId, noticeId, request));
     }
 
-    @DeleteMapping("/internal/admin/concerts/{id}/notices/{noticeId}")
-    public ApiResponse<Void> deleteNotice(@PathVariable @Positive long id, @PathVariable @Positive long noticeId) {
-        noticeService.delete(id, noticeId);
+    @DeleteMapping("/internal/admin/concerts/{concertId}/notices/{noticeId}")
+    public ApiResponse<Void> deleteNotice(@PathVariable @Positive long concertId, @PathVariable @Positive long noticeId) {
+        noticeService.delete(concertId, noticeId);
         return ApiResponse.onSuccess(null);
     }
 }

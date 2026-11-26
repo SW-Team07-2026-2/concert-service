@@ -42,22 +42,22 @@ public class BookingController {
      * N10 좌석 선점 — seatIds 로 여러 좌석 (공연의 maxSeatsPerUser 까지). 🔴 요청에 금액 필드가 없습니다. 금액은 좌석 가격의 합으로 서버가 정합니다 (11/04 77A).
      * 하나라도 남이 잡았으면 전부 안 잡히고 409 SEAT_TAKEN (result.seatId) · 내 선점이 다른 좌석에 있으면 409 HOLD_EXISTS (result.bookingId — N13 으로 취소한 뒤 다시)
      */
-    @PostMapping("/api/concerts/{id}/bookings")
-    public ApiResponse<BookingCreated> create(@CurrentUser Long userId, @PathVariable @Positive long id,
+    @PostMapping("/api/concerts/{concertId}/bookings")
+    public ApiResponse<BookingCreated> create(@CurrentUser Long userId, @PathVariable @Positive long concertId,
                                          @RequestHeader(value = "X-Entry-Token", required = false) String entryToken,
                                          @Valid @RequestBody BookingCreateRequest request) {
-        return ApiResponse.onSuccess(bookingService.create(id, userId, entryToken, request.seatIds()));
+        return ApiResponse.onSuccess(bookingService.create(concertId, userId, entryToken, request.seatIds()));
     }
 
     /**
      * N16 — 결제 승인. 🔴 티켓은 P1(/api/payments/confirm)이 아니라 여기로 — 내 선점이 살아 있어야 승인합니다.
      * 선점 마감이 지났으면 410 HOLD_EXPIRED (토스 호출 없음 · 돈 안 나감) · 승인 응답이 없으면 503 PAYMENT_PENDING.
      */
-    @PostMapping("/api/concerts/bookings/{id}/confirm")
-    public ApiResponse<BookingPaid> confirm(@CurrentUser Long userId, @PathVariable @Positive long id,
+    @PostMapping("/api/concerts/bookings/{bookingId}/confirm")
+    public ApiResponse<BookingPaid> confirm(@CurrentUser Long userId, @PathVariable @Positive long bookingId,
                                             @Valid @RequestBody BookingConfirmRequest request,
                                             @RequestHeader(value = "X-Force-Decline", required = false) String forceDecline) {
-        return ApiResponse.onSuccess(bookingService.pay(userId, id, request.paymentKey(), request.amount(), forceDecline));
+        return ApiResponse.onSuccess(bookingService.pay(userId, bookingId, request.paymentKey(), request.amount(), forceDecline));
     }
 
     @GetMapping("/api/concerts/bookings")
@@ -67,19 +67,19 @@ public class BookingController {
         return ApiResponse.onSuccess(bookingService.list(userId, Cursor.decode(cursor), pageSize.resolve(size)));
     }
 
-    @GetMapping("/api/concerts/bookings/{id}")
-    public ApiResponse<BookingDetail> get(@CurrentUser Long userId, @PathVariable @Positive long id) {
-        return ApiResponse.onSuccess(bookingService.get(userId, id));
+    @GetMapping("/api/concerts/bookings/{bookingId}")
+    public ApiResponse<BookingDetail> get(@CurrentUser Long userId, @PathVariable @Positive long bookingId) {
+        return ApiResponse.onSuccess(bookingService.get(userId, bookingId));
     }
 
-    @PostMapping("/api/concerts/bookings/{id}/cancel")
-    public ApiResponse<BookingDetail> cancel(@CurrentUser Long userId, @PathVariable @Positive long id) {
-        return ApiResponse.onSuccess(bookingService.cancel(userId, id));
+    @PostMapping("/api/concerts/bookings/{bookingId}/cancel")
+    public ApiResponse<BookingDetail> cancel(@CurrentUser Long userId, @PathVariable @Positive long bookingId) {
+        return ApiResponse.onSuccess(bookingService.cancel(userId, bookingId));
     }
 
     /** N17 — 입장 QR. 30초 뒤 무효라 앱이 20초마다 다시 부릅니다 (캡처본은 검표에서 ENTRY_QR_EXPIRED) */
-    @GetMapping("/api/concerts/bookings/{id}/entry-qr")
-    public ApiResponse<EntryQr> entryQr(@CurrentUser Long userId, @PathVariable @Positive long id) {
-        return ApiResponse.onSuccess(entryService.issue(userId, id));
+    @GetMapping("/api/concerts/bookings/{bookingId}/entry-qr")
+    public ApiResponse<EntryQr> entryQr(@CurrentUser Long userId, @PathVariable @Positive long bookingId) {
+        return ApiResponse.onSuccess(entryService.issue(userId, bookingId));
     }
 }
