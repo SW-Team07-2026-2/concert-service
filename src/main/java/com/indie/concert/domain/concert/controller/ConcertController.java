@@ -92,15 +92,15 @@ public class ConcertController {
         return ApiResponse.onSuccess(result);
     }
 
-    @GetMapping("/api/concerts/{id}")
-    public ApiResponse<ConcertDetail> get(@PathVariable @Positive long id) {
-        return ApiResponse.onSuccess(concertService.getPublic(id));   // ✏️ 11/25 3초 캐시
+    @GetMapping("/api/concerts/{concertId}")
+    public ApiResponse<ConcertDetail> get(@PathVariable @Positive long concertId) {
+        return ApiResponse.onSuccess(concertService.getPublic(concertId));   // ✏️ 11/25 3초 캐시
     }
 
     /** 공연 변경 공지 — 최신순 (11/18) */
-    @GetMapping("/api/concerts/{id}/notices")
-    public ApiResponse<List<NoticeView>> notices(@PathVariable @Positive long id) {
-        return ApiResponse.onSuccess(noticeService.list(id));
+    @GetMapping("/api/concerts/{concertId}/notices")
+    public ApiResponse<List<NoticeView>> notices(@PathVariable @Positive long concertId) {
+        return ApiResponse.onSuccess(noticeService.list(concertId));
     }
 
     /** ?month=2026-11&artistIds=1,2 */
@@ -120,8 +120,8 @@ public class ConcertController {
         return ApiResponse.onSuccess(venueService.list(region, q, hasUpcoming, page, pageSize.resolve(size)));
     }
 
-    @GetMapping("/api/concerts/venues/{id}")
-    public ApiResponse<VenueDetail> venue(@PathVariable @Positive long id) {
-        return ApiResponse.onSuccess(venueService.get(id));
+    @GetMapping("/api/concerts/venues/{venueId}")
+    public ApiResponse<VenueDetail> venue(@PathVariable @Positive long venueId) {
+        return ApiResponse.onSuccess(venueService.get(venueId));
     }
 }

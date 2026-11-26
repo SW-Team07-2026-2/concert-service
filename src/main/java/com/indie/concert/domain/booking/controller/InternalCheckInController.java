@@ -33,8 +33,8 @@ public class InternalCheckInController {
         return ApiResponse.onSuccess(entryService.openConcerts());
     }
 
-    @PostMapping("/internal/admin/concerts/{id}/check-in")
-    public ApiResponse<CheckInResult> checkIn(@PathVariable @Positive long id, @Valid @RequestBody CheckInRequest request) {
-        return ApiResponse.onSuccess(entryService.checkIn(id, request.token(), request.checkerId()));
+    @PostMapping("/internal/admin/concerts/{concertId}/check-in")
+    public ApiResponse<CheckInResult> checkIn(@PathVariable @Positive long concertId, @Valid @RequestBody CheckInRequest request) {
+        return ApiResponse.onSuccess(entryService.checkIn(concertId, request.token(), request.checkerId()));
     }
 }
