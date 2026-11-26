@@ -23,13 +23,13 @@ public class InternalQueueController {
         this.queueService = queueService;
     }
 
-    @PostMapping("/internal/concerts/{id}/queue/rebuild")
-    public ApiResponse<QueueRebuilt> rebuild(@PathVariable @Positive long id) {
-        return ApiResponse.onSuccess(queueService.rebuildManually(id));
+    @PostMapping("/internal/concerts/{concertId}/queue/rebuild")
+    public ApiResponse<QueueRebuilt> rebuild(@PathVariable @Positive long concertId) {
+        return ApiResponse.onSuccess(queueService.rebuildManually(concertId));
     }
 
-    @GetMapping("/internal/concerts/{id}/queue/metrics")
-    public ApiResponse<QueueMetrics> metrics(@PathVariable @Positive long id) {
-        return ApiResponse.onSuccess(queueService.metrics(id));
+    @GetMapping("/internal/concerts/{concertId}/queue/metrics")
+    public ApiResponse<QueueMetrics> metrics(@PathVariable @Positive long concertId) {
+        return ApiResponse.onSuccess(queueService.metrics(concertId));
     }
 }

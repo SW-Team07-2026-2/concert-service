@@ -41,8 +41,8 @@ public class InternalAdminBookingController {
      * 예매 취소 대행 — 회원 본인의 취소(N13)와 같은 규칙입니다 (입장한 예매 · 공연 24시간 전이 지난 예매는 409).
      * 본문 { reason } 은 Studio 의 작업 기록용이라 여기서는 읽지 않습니다.
      */
-    @PostMapping("/internal/admin/concerts/bookings/{id}/cancel")
-    public ApiResponse<BookingDetail> cancel(@PathVariable @Positive long id) {
-        return ApiResponse.onSuccess(bookingService.cancelByAdmin(id));
+    @PostMapping("/internal/admin/concerts/bookings/{bookingId}/cancel")
+    public ApiResponse<BookingDetail> cancel(@PathVariable @Positive long bookingId) {
+        return ApiResponse.onSuccess(bookingService.cancelByAdmin(bookingId));
     }
 }
