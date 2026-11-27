@@ -7,13 +7,16 @@ import com.indie.concert.domain.concert.dto.response.CalendarDay;
 import com.indie.concert.domain.concert.dto.response.ConcertCalendar;
 import com.indie.concert.domain.concert.dto.response.ConcertDetail;
 import com.indie.concert.domain.concert.dto.response.ConcertSummary;
+import com.indie.concert.domain.concert.dto.response.SessionView;
 import com.indie.concert.domain.concert.dto.response.VenueRef;
 import com.indie.concert.domain.concert.dto.response.VenueView;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
+import com.indie.concert.domain.concert.entity.ConcertSessionEntity;
 import com.indie.concert.domain.concert.entity.Genre;
 import com.indie.concert.domain.concert.entity.Region;
 import com.indie.concert.domain.concert.entity.VenueEntity;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
+import com.indie.concert.domain.concert.repository.ConcertSessionRepository;
 import com.indie.concert.domain.concert.repository.VenueRepository;
 import com.indie.concert.global.common.exception.CommonErrorCode;
 import com.indie.concert.global.common.exception.GeneralException;
@@ -53,6 +56,7 @@ public class ConcertService {
     static final int MAX_ARTIST_IDS = 200;
 
     private final ConcertRepository concertRepository;
+    private final ConcertSessionRepository sessionRepository;
     private final VenueRepository venueRepository;
     private final LineupReader lineupReader;
     private final ZoneId zone;
@@ -66,9 +70,10 @@ public class ConcertService {
     private final Cache<Long, ConcertDetail> details = Caffeine.newBuilder()
             .expireAfterWrite(Duration.ofSeconds(3)).maximumSize(1_000).build();
 
-    public ConcertService(ConcertRepository concertRepository, VenueRepository venueRepository, LineupReader lineupReader,
-                          ConcertProperties props, Clock clock) {
+    public ConcertService(ConcertRepository concertRepository, ConcertSessionRepository sessionRepository,
+                          VenueRepository venueRepository, LineupReader lineupReader, ConcertProperties props, Clock clock) {
         this.concertRepository = concertRepository;
+        this.sessionRepository = sessionRepository;
         this.venueRepository = venueRepository;
         this.lineupReader = lineupReader;
         this.zone = ZoneId.of(props.zone());
@@ -76,7 +81,7 @@ public class ConcertService {
     }
 
     /**
-     * N1 — from 이 없으면 지금 이후 (지난 공연 제외). to 는 그날까지 포함.
+     * N1 — from 이 없으면 지금 이후 (지난 공연 제외). to 는 그날까지 포함. 11/27 회차가 [from, to] 에 걸치는 공연 (남은 회차가 있으면 나옴)
      * 11/19 팔로우 탭 — 목록 조건은 여러 개 · saleStatus 를 고르면 기본 '지금 이후' 를 풀어 지난 공연(CLOSED)도 거릅니다 ·
      * sort 없으면 공연일 가까운 순 · ARTIST_ORDER 는 artistIds 순서 · UPDATED 는 최근 수정순
      */
@@ -120,11 +125,12 @@ public class ConcertService {
         return ids;
     }
 
-    /** N2 공개 — get 을 3초 캐시. 판매 상태는 요청 시각으로 다시 계산합니다 (오픈 시각이 지나면 캐시와 상관없이 바로 ON_SALE) */
+    /** N2 공개 — get 을 3초 캐시. 판매 상태는 요청 시각으로 다시 계산합니다 (오픈 시각이 지나면 캐시와 상관없이 바로 ON_SALE · 회차도 같음) */
     public ConcertDetail getPublic(long id) {
         ConcertDetail d = details.get(id, this::get);
-        String status = ConcertEntity.saleStatus(d.startsAt(), d.bookingOpenAt(), OffsetDateTime.now(clock)).name();
-        return status.equals(d.saleStatus()) ? d : d.withSaleStatus(status);
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        return d.withSaleStatus(ConcertEntity.saleStatus(d.lastStartsAt(), d.bookingOpenAt(), now).name(), d.sessions().stream()
+                .map(s -> s.withSaleStatus(ConcertEntity.saleStatus(s.startsAt(), d.bookingOpenAt(), now).name())).toList());
     }
 
     /** N2 — 공연 상세 + 공연장 + 판매 상태 + 예매 오픈 시각 (08 §7) */
@@ -132,14 +138,21 @@ public class ConcertService {
     public ConcertDetail get(long id) {
         ConcertEntity c = concertRepository.findById(id).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
         VenueEntity v = venueRepository.findById(c.getVenueId()).orElseThrow();
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        List<SessionView> sessions = sessionRepository.findByConcertIdOrderByStartsAtAsc(id).stream()
+                .map(s -> new SessionView(s.getId(), s.getStartsAt(),
+                        ConcertEntity.saleStatus(s.getStartsAt(), c.getBookingOpenAt(), now).name())).toList();
         return new ConcertDetail(c.getId(), c.getTitle(), c.getType().name(), c.getGenre(), lineupReader.of(c.getId()),
-                c.getStartsAt(), c.getEndsAt(), c.getPrice(), c.saleStatus(OffsetDateTime.now(clock)).name(),
+                c.getStartsAt(), c.getLastStartsAt(), c.getEndsAt(), c.getPrice(), c.saleStatus(now).name(),
                 c.getBookingOpenAt(), c.isQueueEnabled(), c.getMaxSeatsPerUser(),
                 new VenueView(v.getId(), v.getName(), v.getRegion().name(), v.getAddress(), v.getCapacity()),
-                c.getDescription(), c.getTerms(), c.getRequirements(), c.getPosterUrl(), c.getImageUrls());
+                c.getDescription(), c.getTerms(), c.getRequirements(), c.getPosterUrl(), c.getImageUrls(), sessions);
     }
 
-    /** N3 — 월 단위 · 날짜별 묶음. 팔로우 기준 보기는 프론트가 팔로우 목록을 artistIds 로 넘깁니다 (08 §7) */
+    /**
+     * N3 — 월 단위 · 날짜별 묶음. 팔로우 기준 보기는 프론트가 팔로우 목록을 artistIds 로 넘깁니다 (08 §7).
+     * 11/27 회차마다 그 날짜에 한 줄 (여러 날 공연은 회차가 있는 날마다 나옴 · 그달 회차만)
+     */
     @Transactional(readOnly = true)
     public ConcertCalendar calendar(String month, List<Long> artistIds) {
         YearMonth ym;
@@ -148,11 +161,20 @@ public class ConcertService {
         } catch (DateTimeParseException e) {
             throw new GeneralException(CommonErrorCode.INVALID_REQUEST, "month 는 yyyy-MM 형식입니다");
         }
-        List<ConcertEntity> rows = concertRepository.findForCalendar(startOfDay(ym.atDay(1)),
-                startOfDay(ym.plusMonths(1).atDay(1)), artistIds);
+        OffsetDateTime from = startOfDay(ym.atDay(1));
+        OffsetDateTime to = startOfDay(ym.plusMonths(1).atDay(1));
+        List<ConcertEntity> rows = concertRepository.findForCalendar(from, to, artistIds);
+        Map<Long, ConcertSummary> byConcert = summaries(rows).stream().collect(Collectors.toMap(ConcertSummary::id, Function.identity()));
+        Map<Long, ConcertEntity> concerts = rows.stream().collect(Collectors.toMap(ConcertEntity::getId, Function.identity()));
+        OffsetDateTime now = OffsetDateTime.now(clock);
         Map<LocalDate, List<ConcertSummary>> byDay = new TreeMap<>();
-        for (ConcertSummary s : summaries(rows)) {
-            byDay.computeIfAbsent(s.startsAt().atZoneSameInstant(zone).toLocalDate(), d -> new ArrayList<>()).add(s);
+        for (ConcertSessionEntity session : sessionRepository.findByConcertIdInOrderByStartsAtAsc(concerts.keySet())) {
+            if (session.getStartsAt().isBefore(from) || !session.getStartsAt().isBefore(to)) continue;
+            ConcertSummary c = byConcert.get(session.getConcertId());
+            String status = ConcertEntity.saleStatus(session.getStartsAt(), concerts.get(c.id()).getBookingOpenAt(), now).name();
+            byDay.computeIfAbsent(session.getStartsAt().atZoneSameInstant(zone).toLocalDate(), d -> new ArrayList<>())
+                    .add(new ConcertSummary(c.id(), c.title(), c.type(), c.genre(), c.artists(), session.getStartsAt(), c.lastStartsAt(),
+                            session.getId(), c.price(), status, c.venue(), c.posterUrl()));
         }
         return new ConcertCalendar(ym.toString(), byDay.entrySet().stream().map(e -> new CalendarDay(e.getKey(), e.getValue())).toList());
     }
@@ -165,8 +187,8 @@ public class ConcertService {
         return rows.stream().map(c -> {
             VenueEntity v = venues.get(c.getVenueId());
             return new ConcertSummary(c.getId(), c.getTitle(), c.getType().name(), c.getGenre(),
-                    lineups.getOrDefault(c.getId(), List.of()), c.getStartsAt(), c.getPrice(), c.saleStatus(now).name(),
-                    new VenueRef(v.getId(), v.getName(), v.getRegion().name()), c.getPosterUrl());
+                    lineups.getOrDefault(c.getId(), List.of()), c.getStartsAt(), c.getLastStartsAt(), null, c.getPrice(),
+                    c.saleStatus(now).name(), new VenueRef(v.getId(), v.getName(), v.getRegion().name()), c.getPosterUrl());
         }).toList();
     }
 

@@ -36,5 +36,6 @@ public record ConcertProperties(Internal internal, InternalToken internalToken, 
 
     public record Node(String host, int port) {}
 
-    public record Entry(long qrTtlSeconds, long openBeforeHours, long closeAfterHours) {}
+    /** 11/27 입장 시간 = [회차 시작 − openBeforeMinutes, 회차 시작 + closeAfterMinutes) — QR 발급 · 검표 모두 이 시간에만 */
+    public record Entry(long qrTtlSeconds, long openBeforeMinutes, long closeAfterMinutes) {}
 }

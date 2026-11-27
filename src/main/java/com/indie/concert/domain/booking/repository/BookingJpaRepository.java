@@ -8,16 +8,15 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.OffsetDateTime;
 import java.util.List;
-import java.util.Optional;
 
 public interface BookingJpaRepository extends JpaRepository<BookingEntity, Long>, BookingRepository {
 
     @Override
     @Query(value = """
             SELECT * FROM booking WHERE concert_id = :concertId AND user_id = :userId AND status IN ('PENDING', 'CONFIRMED')
-            LIMIT 1
+            ORDER BY id
             """, nativeQuery = true)
-    Optional<BookingEntity> findActive(@Param("concertId") long concertId, @Param("userId") long userId);
+    List<BookingEntity> findActive(@Param("concertId") long concertId, @Param("userId") long userId);
 
     @Override
     @Modifying
@@ -44,10 +43,6 @@ public interface BookingJpaRepository extends JpaRepository<BookingEntity, Long>
     String lockStatus(@Param("id") long id);
 
     @Override
-    @Query(value = "SELECT id FROM booking WHERE user_id = :userId AND status = 'PENDING' ORDER BY id", nativeQuery = true)
-    List<Long> findPendingIds(@Param("userId") long userId);
-
-    @Override
     @Query(value = "SELECT user_id FROM booking WHERE concert_id = :concertId AND status = 'CONFIRMED' ORDER BY user_id", nativeQuery = true)
     List<Long> findConfirmedUserIds(@Param("concertId") long concertId);
 
@@ -71,9 +66,43 @@ public interface BookingJpaRepository extends JpaRepository<BookingEntity, Long>
     @Modifying
     @Query(value = """
             UPDATE booking SET checked_in_at = :at, checked_in_by = :checkerId
-            WHERE id = :id AND status = 'CONFIRMED' AND checked_in_at IS NULL
+            WHERE id = :id AND status = 'CONFIRMED' AND checked_in_at IS NULL AND withdrawn_at IS NULL
             """, nativeQuery = true)
     int checkIn(@Param("id") long id, @Param("checkerId") long checkerId, @Param("at") OffsetDateTime at);
+
+    @Override
+    @Modifying
+    @Query(value = """
+            UPDATE booking SET withdrawn_at = :at
+            WHERE user_id = :userId AND status IN ('PENDING', 'CONFIRMED') AND checked_in_at IS NULL AND withdrawn_at IS NULL
+            """, nativeQuery = true)
+    int markWithdrawn(@Param("userId") long userId, @Param("at") OffsetDateTime at);
+
+    @Override
+    @Query(value = """
+            SELECT id FROM booking WHERE user_id = :userId AND withdrawn_at IS NOT NULL AND status IN ('PENDING', 'CONFIRMED')
+            ORDER BY id
+            """, nativeQuery = true)
+    List<Long> findWithdrawnIds(@Param("userId") long userId);
+
+    @Override
+    @Query(value = """
+            SELECT id FROM booking WHERE withdrawn_at IS NOT NULL AND status IN ('PENDING', 'CONFIRMED')
+            ORDER BY id LIMIT :limit
+            """, nativeQuery = true)
+    List<Long> findWithdrawnOpen(@Param("limit") int limit);
+
+    @Override
+    @Modifying
+    @Query(value = """
+            UPDATE booking SET status = 'EXPIRED'
+            WHERE id = :id AND status = 'CONFIRMED' AND checked_in_at IS NULL AND withdrawn_at IS NOT NULL
+            """, nativeQuery = true)
+    int forfeit(@Param("id") long id);
+
+    @Override
+    @Query(value = "SELECT EXISTS (SELECT 1 FROM booking WHERE session_id = :sessionId)", nativeQuery = true)
+    boolean existsBySession(@Param("sessionId") long sessionId);
 
     @Override
     @Query(value = """

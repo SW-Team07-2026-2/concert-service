@@ -55,6 +55,7 @@ class QueueServiceTest {
         when(concert.getId()).thenReturn(1L);
         when(concert.isQueueEnabled()).thenReturn(true);
         when(concert.getStartsAt()).thenReturn(AT.plusDays(30));
+        when(concert.getLastStartsAt()).thenReturn(AT.plusDays(30));
         when(concerts.findById(1L)).thenReturn(Optional.of(concert));
         when(store.isReady(1L)).thenReturn(false);
         when(store.lockRebuild(1L)).thenReturn("lock");
@@ -171,6 +172,7 @@ class QueueServiceTest {
         when(concert.getId()).thenReturn(1L);
         when(concert.isQueueEnabled()).thenReturn(true);
         when(concert.getStartsAt()).thenReturn(AT.plusDays(30));
+        when(concert.getLastStartsAt()).thenReturn(AT.plusDays(30));
         when(concert.getBookingOpenAt()).thenReturn(AT.minusMinutes(1));
         when(concerts.findById(1L)).thenReturn(Optional.of(concert));
         return concert;

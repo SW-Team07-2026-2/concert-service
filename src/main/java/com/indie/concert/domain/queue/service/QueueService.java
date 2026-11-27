@@ -69,14 +69,14 @@ public class QueueService {
     private final Cache<Long, Sale> sales = Caffeine.newBuilder().expireAfterWrite(SNAPSHOT_TTL).maximumSize(1_000).build();
     private final Cache<Long, Seats> seats = Caffeine.newBuilder().expireAfterWrite(SNAPSHOT_TTL).maximumSize(1_000).build();
 
-    /** 공연에서 대기열이 쓰는 값만 — JPA 엔티티를 스레드 사이에 공유하지 않게 */
-    private record Sale(boolean queueEnabled, OffsetDateTime startsAt, OffsetDateTime bookingOpenAt) {
+    /** 공연에서 대기열이 쓰는 값만 — JPA 엔티티를 스레드 사이에 공유하지 않게. 11/27 대기열은 공연에 하나 · 마지막 회차 시작까지 */
+    private record Sale(boolean queueEnabled, OffsetDateTime lastStartsAt, OffsetDateTime bookingOpenAt) {
         static Sale of(ConcertEntity c) {
-            return new Sale(c.isQueueEnabled(), c.getStartsAt(), c.getBookingOpenAt());
+            return new Sale(c.isQueueEnabled(), c.getLastStartsAt(), c.getBookingOpenAt());
         }
 
         ConcertEntity.SaleStatus status(OffsetDateTime now) {
-            return ConcertEntity.saleStatus(startsAt, bookingOpenAt, now);
+            return ConcertEntity.saleStatus(lastStartsAt, bookingOpenAt, now);
         }
     }
 
@@ -109,8 +109,8 @@ public class QueueService {
         if (seats(concertId).soldOut()) throw new GeneralException(QueueErrorCode.SOLD_OUT);
         QueueStore.Entered entered;
         try {
-            if (!store.isReady(concertId) && !rebuild(concertId, sale.startsAt(), false)) throw unavailable();
-            entered = store.enter(concertId, userId, expireAt(sale.startsAt()));
+            if (!store.isReady(concertId) && !rebuild(concertId, sale.lastStartsAt(), false)) throw unavailable();
+            entered = store.enter(concertId, userId, expireAt(sale.lastStartsAt()));
         } catch (QueueStore.Unavailable e) {
             log.warn("queue_enter_unavailable concertId={} error={}", concertId, e.getMessage());
             throw unavailable();
@@ -131,7 +131,7 @@ public class QueueService {
     public QueueStatus status(long concertId, long userId) {
         Sale sale = queueSale(concertId);
         try {
-            if (!store.isReady(concertId) && !rebuild(concertId, sale.startsAt(), false)) return degraded(concertId, userId);
+            if (!store.isReady(concertId) && !rebuild(concertId, sale.lastStartsAt(), false)) return degraded(concertId, userId);
             OptionalLong rank = store.rank(concertId, userId);
             if (rank.isPresent()) {
                 if (seats(concertId).soldOut()) return SOLD_OUT;
@@ -209,7 +209,7 @@ public class QueueService {
         long concertId = concert.getId();
         try {
             if (!store.lead(concertId, instanceId)) return;
-            if (!store.isReady(concertId) && !rebuild(concertId, concert.getStartsAt(), false)) return;
+            if (!store.isReady(concertId) && !rebuild(concertId, concert.getLastStartsAt(), false)) return;
             if (seats(concertId).noneToPick()) return;
             List<String> tokens = new ArrayList<>(props.admitBatch());
             for (int i = 0; i < props.admitBatch(); i++) tokens.add(newToken());
@@ -236,7 +236,7 @@ public class QueueService {
                 if (batch.isEmpty()) return;
                 entries.upsertWaiting(concertId, batch);
                 last = batch.get(batch.size() - 1).seq();
-                store.saveSnapshotSeq(concertId, last, expireAt(concert.getStartsAt()));
+                store.saveSnapshotSeq(concertId, last, expireAt(concert.getLastStartsAt()));
                 if (batch.size() < props.snapshotBatch()) return;
             }
         } catch (QueueStore.Unavailable e) {
@@ -250,7 +250,7 @@ public class QueueService {
         long started = System.nanoTime();
         boolean rebuilt;
         try {
-            rebuilt = rebuild(concert.getId(), concert.getStartsAt(), true);
+            rebuilt = rebuild(concert.getId(), concert.getLastStartsAt(), true);
         } catch (QueueStore.Unavailable e) {
             throw unavailable();
         }
@@ -371,8 +371,8 @@ public class QueueService {
         return (long) Math.ceil(rank * (double) props.admitIntervalMs() / (props.admitBatch() * 1000.0));
     }
 
-    private static Instant expireAt(OffsetDateTime startsAt) {
-        return startsAt.plusDays(1).toInstant();   // 16 §4 — 공연 종료 + 1일
+    private static Instant expireAt(OffsetDateTime lastStartsAt) {
+        return lastStartsAt.plusDays(1).toInstant();   // 16 §4 — 공연 종료 + 1일 (11/27 마지막 회차 시작 + 1일)
     }
 
     private OffsetDateTime now() {

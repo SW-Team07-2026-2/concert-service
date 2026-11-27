@@ -22,7 +22,7 @@ import java.time.Instant;
 import java.util.Date;
 
 /**
- * 입장 QR 토큰 (HS256 · 30초) — Concert 만 아는 키(entry.qr-secret)로 서명합니다. 내부 호출 공유 시크릿과 다른 키 —
+ * 입장 QR 토큰 (HS256 · entry.qr-ttl-seconds · 입장 마감을 넘지 않음) — Concert 만 아는 키(entry.qr-secret)로 서명합니다. 내부 호출 공유 시크릿과 다른 키 —
  * 다른 서비스가 털려도 입장권을 만들 수 없게.
  * 클레임은 예매 · 공연 id 와 만료뿐입니다 (QR 은 누구나 읽음 — 이름 · 좌석을 넣지 않음). 1회 입장은 DB(checked_in_at)가 보장합니다.
  */
@@ -45,8 +45,10 @@ public class EntryQrTokens {
         this.clock = clock;
     }
 
-    public Issued issue(long bookingId, long concertId) {
-        Instant exp = clock.instant().plusSeconds(ttlSeconds);
+    /** notAfter = 입장 마감 — 마감 직전에 받은 QR 도 마감까지만 (11/27) */
+    public Issued issue(long bookingId, long concertId, Instant notAfter) {
+        Instant ttl = clock.instant().plusSeconds(ttlSeconds);
+        Instant exp = ttl.isAfter(notAfter) ? notAfter : ttl;
         JWTClaimsSet claims = new JWTClaimsSet.Builder()
                 .claim("typ", TYPE)
                 .claim("bid", bookingId)
@@ -62,8 +64,11 @@ public class EntryQrTokens {
         return new Issued(jwt.serialize(), exp);
     }
 
-    /** 서명 · typ 가 틀리면 ENTRY_QR_INVALID (어느 검사인지는 로그), 서명은 맞는데 시간이 지났으면 ENTRY_QR_EXPIRED (캡처본) */
-    public Claims verify(String token) {
+    /**
+     * 서명 · 형식만 봅니다 — 틀리면 ENTRY_QR_INVALID (어느 검사인지는 로그). 만료는 보지 않고 expiresAt 으로 돌려줍니다.
+     * 11/27 검표는 공연 · 입장 시간을 먼저 보고 그다음 만료를 봅니다 (EntryService.checkIn) — 마감 뒤에 찍은 캡처본은 ENTRY_CLOSED
+     */
+    public Claims parse(String token) {
         Long bookingId;
         Long concertId;
         Date exp;
@@ -82,10 +87,7 @@ public class EntryQrTokens {
         } catch (ParseException | JOSEException e) {
             throw invalid("parse");
         }
-        if (!exp.toInstant().isAfter(clock.instant())) {
-            throw new GeneralException(BookingErrorCode.ENTRY_QR_EXPIRED);
-        }
-        return new Claims(bookingId, concertId);
+        return new Claims(bookingId, concertId, exp.toInstant());
     }
 
     /** 검표 화면에는 "입장 QR 이 아닙니다" 하나 — 위조 QR 에 어디서 걸렸는지 알려주지 않습니다 */
@@ -96,5 +98,10 @@ public class EntryQrTokens {
 
     public record Issued(String token, Instant expiresAt) {}
 
-    public record Claims(long bookingId, long concertId) {}
+    /** 만료 여부는 부르는 쪽이 같은 시계로 봅니다 — expired(now) */
+    public record Claims(long bookingId, long concertId, Instant expiresAt) {
+        public boolean expired(Instant now) {
+            return !expiresAt.isAfter(now);
+        }
+    }
 }
