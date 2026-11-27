@@ -6,7 +6,7 @@ import java.time.OffsetDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** 판매 상태는 저장하지 않고 시각으로 계산합니다 (08 §8.1) · 관리자 수정은 보낸 값만 바꿉니다 */
+/** 판매 상태는 저장하지 않고 시각으로 계산합니다 (08 §8.1), 관리자 수정은 보낸 값만 바꿉니다 */
 class ConcertEntityTest {
 
     private static final OffsetDateTime STARTS = OffsetDateTime.parse("2026-11-20T19:00:00+09:00");
@@ -38,7 +38,7 @@ class ConcertEntityTest {
         assertThat(concert(OPENS).saleStatus(STARTS)).isEqualTo(ConcertEntity.SaleStatus.CLOSED);
     }
 
-    /** null 은 그대로 — 대기열 · 1인 매수처럼 보낸 값만 바뀝니다 */
+    /** null 은 그대로 - 대기열, 1인 매수처럼 보낸 값만 바뀝니다 */
     @Test
     void updateChangesOnlyGivenValues() {
         ConcertEntity c = concert(OPENS);

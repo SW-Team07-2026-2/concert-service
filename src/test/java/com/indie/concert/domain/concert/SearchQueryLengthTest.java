@@ -24,7 +24,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** 11/23 검색어 최대 100자 — 붙여넣기까지 생각해 지금 가장 긴 이름(공연 제목 62자)보다 넉넉하게. 넘으면 조회 없이 400 */
+/** 검색어 최대 100자 - 붙여넣기까지 생각해 지금 가장 긴 이름(공연 제목 62자)보다 넉넉하게. 넘으면 조회 없이 400 */
 class SearchQueryLengthTest {
 
     private final ConcertService concertService = mock(ConcertService.class);
@@ -60,7 +60,7 @@ class SearchQueryLengthTest {
         mvc.perform(get("/api/concerts/search").param("q", "가".repeat(100))).andExpect(status().isOk());
     }
 
-    /** 11/24 검색어 메트릭 — 로그인 여부(X-User-Id) · 페이지를 그대로 넘깁니다 (남길지는 UserMetrics 가 정함) */
+    /** 검색어 메트릭 - 로그인 여부(X-User-Id), 페이지를 그대로 넘깁니다 (남길지는 UserMetrics 가 정함) */
     @Test
     void searchPassesKeywordToUserMetrics() throws Exception {
         mvc.perform(get("/api/concerts/search").header(CurrentUserArgumentResolver.HEADER, "42").param("q", "새소년"))

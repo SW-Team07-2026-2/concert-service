@@ -18,7 +18,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-/** 11/24 공연 검색어 메트릭 — 남기는 조건과 10분 구간 안의 같은 검색어는 같은 metricId */
+/** 공연 검색어 메트릭 - 남기는 조건과 10분 구간 안의 같은 검색어는 같은 metricId */
 class UserMetricsTest {
 
     private final EventPublisher publisher = mock(EventPublisher.class);

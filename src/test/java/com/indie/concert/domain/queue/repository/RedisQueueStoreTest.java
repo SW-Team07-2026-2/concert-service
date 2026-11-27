@@ -19,7 +19,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** 대기열 Lua 스크립트를 실제 Redis 에서 — 순서 · 중복 진입 · 이탈자 건너뛰기 · 리더 · 복구 후 seq. Docker 가 없으면 건너뜁니다 */
+/** 대기열 Lua 스크립트를 실제 Redis 에서 - 순서, 중복 진입, 이탈자 건너뛰기, 리더, 복구 후 seq. Docker 가 없으면 건너뜁니다 */
 @Testcontainers(disabledWithoutDocker = true)
 class RedisQueueStoreTest {
 
@@ -64,7 +64,7 @@ class RedisQueueStoreTest {
         assertThat(again.result()).isEqualTo(QueueStore.Entered.Result.ALREADY_WAITING);
         assertThat(again.rank()).isEqualTo(1);
         assertThat(again.total()).isEqualTo(3);
-        assertThat(redis.getExpire("queue:concert:" + CONCERT)).isPositive();   // noeviction — 모든 키에 TTL
+        assertThat(redis.getExpire("queue:concert:" + CONCERT)).isPositive();   // noeviction - 모든 키에 TTL
     }
 
     @Test
@@ -86,7 +86,7 @@ class RedisQueueStoreTest {
         assertThat(store.enter(CONCERT, 2, EXPIRE_AT).rank()).isZero();             // 다시 줄 서면 새 번호 (맨 뒤)
     }
 
-    /** 입장 토큰 복구 — 남은 시간만큼 · 이미 있는 토큰은 덮지 않음 (SET NX) · 복구된 사람은 다시 줄 서지 않음 */
+    /** 입장 토큰 복구 - 남은 시간만큼, 이미 있는 토큰은 덮지 않음 (SET NX), 복구된 사람은 다시 줄 서지 않음 */
     @Test
     void restoredEntryTokensKeepRemainingTtlAndDoNotOverwrite() {
         store.enter(CONCERT, 1, EXPIRE_AT);
@@ -116,7 +116,7 @@ class RedisQueueStoreTest {
         assertThat(store.lead(CONCERT, "pod-a")).isTrue();                          // 리더는 연장
     }
 
-    /** 복구 후 seq 를 DB 최댓값 이상으로 — 안 하면 새 진입자가 기존 대기자 앞에 섭니다 */
+    /** 복구 후 seq 를 DB 최댓값 이상으로 - 안 하면 새 진입자가 기존 대기자 앞에 섭니다 */
     @Test
     void rebuildRestoresOrderAndKeepsSequenceAhead() {
         assertThat(store.isReady(CONCERT)).isFalse();

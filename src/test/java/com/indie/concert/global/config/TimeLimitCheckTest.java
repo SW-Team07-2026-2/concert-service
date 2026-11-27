@@ -34,7 +34,7 @@ class TimeLimitCheckTest {
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("entry-ttl-minutes");
     }
 
-    /** 11/27 QR 은 회차 60분 전부터 — 취소 마감(24시간 전)과 같거나 앞서면 입장 뒤 환불이 생기므로 기동 실패 */
+    /** QR 은 회차 60분 전부터 - 취소 마감(24시간 전)과 같거나 앞서면 입장 뒤 환불이 생기므로 기동 실패 */
     @Test
     void qrOpeningBeforeCancelDeadlineFails() {
         assertThatThrownBy(() -> TimeLimitCheck.check(props(7, 179, 24, 24 * 60, 1000, 5000, 15, 3000)))
@@ -54,7 +54,7 @@ class TimeLimitCheckTest {
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("alive-ttl-seconds");
     }
 
-    /** ✏️ 11/25 — 가장 긴 조회 간격 15초를 3번 놓칠 시간(45초)보다 짧으면 기동 실패 */
+    /** - 가장 긴 조회 간격 15초를 3번 놓칠 시간(45초)보다 짧으면 기동 실패 */
     @Test
     void aliveTtlShorterThanThreeSlowestPollsFails() {
         assertThatThrownBy(() -> TimeLimitCheck.check(props(7, 179, 24, 60, 1000, 5000, 44, 3000)))

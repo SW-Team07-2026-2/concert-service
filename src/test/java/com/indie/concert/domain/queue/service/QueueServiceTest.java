@@ -48,7 +48,7 @@ class QueueServiceTest {
                     null, null, null, null, null),
             new SimpleMeterRegistry(), Clock.fixed(NOW, ZoneOffset.UTC));
 
-    /** ★ 대기열 Redis 가 비워져도 입장한 사람은 같은 토큰을 남은 시간만큼 다시 받습니다 — 줄을 다시 서지 않음 (10/24) */
+    /** 대기열 Redis 가 비워져도 입장한 사람은 같은 토큰을 남은 시간만큼 다시 받습니다 - 줄을 다시 서지 않음 */
     @Test
     void rebuildRestoresEntryTokensWithRemainingTtl() {
         ConcertEntity concert = mock(ConcertEntity.class);
@@ -71,10 +71,10 @@ class QueueServiceTest {
         assertThat(status.entryToken()).isEqualTo("tok-5");
         InOrder order = inOrder(store);
         order.verify(store).restoreEntries(1L, List.of(new QueueStore.EntryGrant(5, "tok-5", 7 * 60_000)));
-        order.verify(store).markReady(eq(1L), anyLong(), any());                     // 토큰을 먼저 — 준비되자마자 조회돼도 있게
+        order.verify(store).markReady(eq(1L), anyLong(), any());                     // 토큰을 먼저 - 준비되자마자 조회돼도 있게
     }
 
-    /** 입장 토큰 — 없음 · 입장 기록 없음(10분 지남) · 다른 토큰은 코드가 따로 (모두 403) */
+    /** 입장 토큰 - 없음, 입장 기록 없음(10분 지남), 다른 토큰은 코드가 따로 (모두 403) */
     @Test
     void entryChecksHaveOwnCodes() {
         ConcertEntity concert = mock(ConcertEntity.class);
@@ -90,7 +90,7 @@ class QueueServiceTest {
         assertThat(service.requireEntry(concert, 6L, " tok-6 ")).hasValue(300);
     }
 
-    /** ✏️ 11/25 순번이 멀수록 조회 간격이 깁니다 — 예상 대기의 1/3 · 2초 ~ 15초 (1초에 20명 입장) */
+    /** 순번이 멀수록 조회 간격이 깁니다 - 예상 대기의 1/3, 2초 ~ 15초 (1초에 20명 입장) */
     @Test
     void pollIntervalGrowsWithRank() {
         onSaleConcert();
@@ -98,12 +98,12 @@ class QueueServiceTest {
         when(store.isReady(1L)).thenReturn(true);
         when(store.size(1L)).thenReturn(5_000L);
 
-        assertThat(pollAfterAtRank(10)).isEqualTo(2_000);       // 1초 뒤 입장 → 가장 짧게
-        assertThat(pollAfterAtRank(300)).isEqualTo(5_000);      // 15초 → 5초
-        assertThat(pollAfterAtRank(5_000)).isEqualTo(15_000);   // 250초 → 상한 15초
+        assertThat(pollAfterAtRank(10)).isEqualTo(2_000);       // 1초 뒤 입장 -> 가장 짧게
+        assertThat(pollAfterAtRank(300)).isEqualTo(5_000);      // 15초 -> 5초
+        assertThat(pollAfterAtRank(5_000)).isEqualTo(15_000);   // 250초 -> 상한 15초
     }
 
-    /** ✏️ 11/25 모든 좌석이 결제 완료 — 진입은 410 SOLD_OUT · 기다리던 사람은 SOLD_OUT 을 받고 조회를 멈춤 · 입장 처리도 멈춤 */
+    /** 모든 좌석이 결제 완료 - 진입은 410 SOLD_OUT, 기다리던 사람은 SOLD_OUT 을 받고 조회를 멈춤, 입장 처리도 멈춤 */
     @Test
     void soldOutClosesQueue() {
         ConcertEntity concert = onSaleConcert();
@@ -119,7 +119,7 @@ class QueueServiceTest {
         verify(store, never()).admit(anyLong(), any(), anyInt());
     }
 
-    /** ✏️ 11/25 남은 좌석이 전부 선점 · 결제 중이면 입장만 멈춤 — 줄은 그대로 · 가장 긴 간격으로 조회 (선점이 풀리면 다시 입장) */
+    /** 남은 좌석이 전부 선점, 결제 중이면 입장만 멈춤 - 줄은 그대로, 가장 긴 간격으로 조회 (선점이 풀리면 다시 입장) */
     @Test
     void admissionPausesWhileAllSeatsHeld() {
         ConcertEntity concert = onSaleConcert();
@@ -133,7 +133,7 @@ class QueueServiceTest {
         verify(store, never()).admit(anyLong(), any(), anyInt());
     }
 
-    /** ✏️ 11/25 좌석을 아직 안 올린 공연(0석)은 매진으로 보지 않고 예전처럼 입장시킵니다 */
+    /** 좌석을 아직 안 올린 공연(0석)은 매진으로 보지 않고 예전처럼 입장시킵니다 */
     @Test
     void concertWithoutSeatsKeepsAdmitting() {
         ConcertEntity concert = onSaleConcert();
@@ -146,7 +146,7 @@ class QueueServiceTest {
         verify(store).admit(eq(1L), any(), anyInt());
     }
 
-    /** ✏️ 11/25 순번 조회가 몰려도 공연 · 남은 좌석은 3초에 한 번만 DB 에서 읽습니다 */
+    /** 순번 조회가 몰려도 공연, 남은 좌석은 3초에 한 번만 DB 에서 읽습니다 */
     @Test
     void statusReadsConcertAndSeatsOncePerTtl() {
         onSaleConcert();

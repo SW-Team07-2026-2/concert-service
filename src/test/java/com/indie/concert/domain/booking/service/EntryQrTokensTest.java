@@ -19,7 +19,7 @@ import java.util.Date;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** 입장 QR — 유효 시간(30초) · 입장 마감을 넘지 않음 · 만료는 부르는 쪽이 판단 (11/27), 위조 · 다른 키 · 다른 종류 토큰은 INVALID */
+/** 입장 QR - 유효 시간(30초), 입장 마감을 넘지 않음, 만료는 부르는 쪽이 판단 , 위조, 다른 키, 다른 종류 토큰은 INVALID */
 class EntryQrTokensTest {
 
     static final String SECRET = "entry-qr-test-secret-0123456789abcdef";
@@ -40,7 +40,7 @@ class EntryQrTokensTest {
         assertThat(claims.expired(NOW.plusSeconds(29))).isFalse();
     }
 
-    /** ★ 캡처본 — 서명은 맞지만 30초가 지났음 (만료 판단은 검표가 시간 검사 뒤에) */
+    /** 캡처본 - 서명은 맞지만 30초가 지났음 (만료 판단은 검표가 시간 검사 뒤에) */
     @Test
     void screenshotExpiresAfter30Seconds() {
         String token = tokens.issue(30L, 42L, FAR).token();
@@ -48,7 +48,7 @@ class EntryQrTokensTest {
         assertThat(tokens.parse(token).expired(NOW.plusSeconds(30))).isTrue();
     }
 
-    /** 11/27 입장 마감 10초 전에 받은 QR 은 마감까지만 */
+    /** 입장 마감 10초 전에 받은 QR 은 마감까지만 */
     @Test
     void tokenNeverOutlivesEntryClose() {
         EntryQrTokens.Issued qr = tokens.issue(30L, 42L, NOW.plusSeconds(10));
@@ -67,7 +67,7 @@ class EntryQrTokensTest {
         assertCode(() -> tokens.parse(parts[0] + "." + forged + "." + parts[2]), "ENTRY_QR_INVALID");
     }
 
-    /** 다른 키(예: 전 서비스 공유 시크릿)로 만든 토큰 · 같은 키라도 입장 QR 이 아닌 토큰 · 아무 문자열 */
+    /** 다른 키(예: 전 서비스 공유 시크릿)로 만든 토큰, 같은 키라도 입장 QR 이 아닌 토큰, 아무 문자열 */
     @Test
     void otherTokensAreInvalid() throws Exception {
         String otherKey = sign("internal-shared-secret-0123456789abcdef", "entry");

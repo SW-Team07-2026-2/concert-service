@@ -11,7 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/** 11/27 입장 상태 — 회차 시작 −60분 ≤ 지금 < 시작 +30분 · entryStatus 는 항상 값이 있음 */
+/** 입장 상태 - 회차 시작 -60분 <= 지금 < 시작 +30분, entryStatus 는 항상 값이 있음 */
 class EntryWindowTest {
 
     private static final OffsetDateTime START = OffsetDateTime.parse("2026-12-20T19:00:00+09:00");
@@ -28,7 +28,7 @@ class EntryWindowTest {
         assertThat(window.status(paid, START, START.plusMinutes(30))).isEqualTo(EntryWindow.Status.CLOSED);
     }
 
-    /** 입장한 표는 마감 뒤에도 CHECKED_IN · 결제 전 · 취소 · 만료 · 탈퇴 정리 중은 언제나 UNAVAILABLE */
+    /** 입장한 표는 마감 뒤에도 CHECKED_IN, 결제 전, 취소, 만료, 탈퇴 정리 중은 언제나 UNAVAILABLE */
     @Test
     void checkedInStaysAndInactiveIsUnavailable() {
         BookingEntity entered = booking(BookingEntity.Status.CONFIRMED, START.minusMinutes(10), null);

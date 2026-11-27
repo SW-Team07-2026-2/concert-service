@@ -29,7 +29,7 @@ import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/** 11/19 목록 카드에 포스터를 그리게 — 목록 · 캘린더 응답에 상세와 같은 posterUrl (없으면 null) */
+/** 목록 카드에 포스터를 그리게 - 목록, 캘린더 응답에 상세와 같은 posterUrl (없으면 null) */
 class ConcertServiceTest {
 
     private static final OffsetDateTime NOW = OffsetDateTime.parse("2026-11-19T12:00:00+09:00");
@@ -58,7 +58,7 @@ class ConcertServiceTest {
         assertThat(items).extracting(ConcertSummary::posterUrl).containsExactly(POSTER, null);
     }
 
-    /** ✏️ 11/25 공개 상세는 3초 캐시 — DB 는 한 번만 · 오픈 시각이 지나면 캐시 안에서도 판매 상태는 바로 ON_SALE */
+    /** 공개 상세는 3초 캐시 - DB 는 한 번만, 오픈 시각이 지나면 캐시 안에서도 판매 상태는 바로 ON_SALE */
     @Test
     void publicDetailIsCachedButSaleStatusFollowsClock() {
         MovableClock clock = new MovableClock(NOW.toInstant());
@@ -86,7 +86,7 @@ class ConcertServiceTest {
         verify(concerts, times(1)).findById(1L);
     }
 
-    /** 11/27 여러 날 공연 — 판매 상태는 마지막 회차 기준 · 회차마다 따로 (첫 회차가 지나도 공연은 판매 중) */
+    /** 여러 날 공연 - 판매 상태는 마지막 회차 기준, 회차마다 따로 (첫 회차가 지나도 공연은 판매 중) */
     @Test
     void saleStatusFollowsLastSessionAndEachSession() {
         ConcertEntity c = new ConcertEntity(7L, "공연 1", ConcertEntity.Type.SOLO, "INDIE_ROCK", NOW.minusHours(1), null, 55000,
