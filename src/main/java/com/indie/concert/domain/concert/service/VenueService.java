@@ -23,7 +23,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
-/** 공연장 (N14 · N15, 10/14 추가) — "이 공연장에서 이번 달에 뭐 하지?" */
+/** 공연장 (N14, N15, 추가) - "이 공연장에서 이번 달에 뭐 하지?" */
 @Service
 public class VenueService {
 
@@ -42,7 +42,15 @@ public class VenueService {
         this.clock = clock;
     }
 
-    /** N14 — hasUpcoming=true 면 지금 이후 공연이 있는 곳만 */
+    /**
+     * N14 - hasUpcoming=true 면 지금 이후 공연이 있는 곳만
+     *
+     * @param region 공연장 지역 필터
+     * @param q 검색어
+     * @param hasUpcoming 예정 공연이 있는 공연장만 조회할지 여부
+     * @param page 0부터 시작하는 페이지 번호
+     * @param size 페이지당 조회 개수
+     */
     @Transactional(readOnly = true)
     public PageResult<VenueView> list(Region region, String q, boolean hasUpcoming, int page, int size) {
         OffsetDateTime upcomingFrom = hasUpcoming ? OffsetDateTime.now(clock) : null;
@@ -50,7 +58,11 @@ public class VenueService {
                 rows -> rows.stream().map(VenueService::view).toList());
     }
 
-    /** N15 — 공연장 상세 + 예정 공연 (최대 50건 · 가까운 순) */
+    /**
+     * N15 - 공연장 상세 + 예정 공연 (최대 50건, 가까운 순)
+     *
+     * @param id 공연장 ID
+     */
     @Transactional(readOnly = true)
     public VenueDetail get(long id) {
         VenueEntity v = venueRepository.findById(id).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));

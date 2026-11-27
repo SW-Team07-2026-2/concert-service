@@ -17,8 +17,8 @@ import java.util.Date;
 import java.util.UUID;
 
 /**
- * 나가는 X-Internal-Token (HS256 · 공유 시크릿) — {iss: concert, aud: <대상>, exp: now+300}. 매 호출마다 새로 만듭니다.
- * 토큰을 캐시하지 마세요 — 생성 비용은 무시할 수준이고, 캐시하면 만료 처리가 또 하나의 버그 지점이 됩니다.
+ * 나가는 X-Internal-Token (HS256, 공유 시크릿) - {iss: concert, aud: <대상>, exp: now+300}. 매 호출마다 새로 만듭니다.
+ * 토큰을 캐시하지 마세요 - 생성 비용은 무시할 수준이고, 캐시하면 만료 처리가 또 하나의 버그 지점이 됩니다.
  */
 @Component
 public class InternalTokenIssuer {

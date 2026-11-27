@@ -15,10 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/**
- * 내부 — 검표 (11/01 · I24). Studio 의 검표 화면(TICKET_CHECKER · S40 · S41)이 부를 자리입니다 (24 §1 · §9).
- * X-Internal-Token(iss=studio) 필수. 검표자 id 는 본문 값입니다 — X-User-Id 를 신뢰하지 않습니다.
- */
+/** Studio 검표 관리자 -> Concert 내부 API로 검표 대상 공연 조회와 QR 입장 처리. */
 @RestController
 public class InternalCheckInController {
 
@@ -28,11 +25,18 @@ public class InternalCheckInController {
         this.entryService = entryService;
     }
 
+    /** 검표 가능한 공연 목록을 반환합니다. */
     @GetMapping("/internal/admin/concerts/check-in")
     public ApiResponse<List<ConcertRef>> concerts() {
         return ApiResponse.onSuccess(entryService.openConcerts());
     }
 
+    /**
+     * QR을 검증하고 한 번만 입장 처리합니다.
+     *
+     * @param concertId 공연 ID
+     * @param request 입장 QR 토큰과 검표자 정보
+     */
     @PostMapping("/internal/admin/concerts/{concertId}/check-in")
     public ApiResponse<CheckInResult> checkIn(@PathVariable @Positive long concertId, @Valid @RequestBody CheckInRequest request) {
         return ApiResponse.onSuccess(entryService.checkIn(concertId, request.token(), request.checkerId()));

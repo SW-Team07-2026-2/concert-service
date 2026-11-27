@@ -33,13 +33,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 입장 (11/01 · 암표 방지) — 앱은 짧은 서명 QR 을 계속 새로 받고(N17), 검표(TICKET_CHECKER)가 찍으면 한 번만 입장 처리합니다.
- * 11/27 입장 시간은 예매한 회차 기준 [시작 − 60분, 시작 + 30분) — 발급 · 검표 모두 이 시간에만 (EntryWindow).
- * <pre>
- * 캡처본 되팔기 → QR 만료 (ENTRY_QR_EXPIRED)                 같은 QR 두 번 → checked_in_at 조건부 UPDATE (ALREADY_CHECKED_IN)
- * 미리 사서 넘기기 → 회차 시작 60분 전부터만 발급 (ENTRY_NOT_OPEN)   입장 뒤 환불 → 취소 마감(24시간 전)이 발급 시작보다 앞
- * 마감 뒤 입장 → 회차 시작 30분 뒤 발급 · 검표 모두 막힘 (ENTRY_CLOSED)   탈퇴 정리 중 → 발급 · 검표 막힘 (ENTRY_NOT_AVAILABLE)
- * </pre>
+ * 회원의 짧은 유효 기간 QR을 발급하고 Studio 검표 요청을 한 번만 입장 처리합니다.
+ * 발급과 검표는 예매한 회차 시작 60분 전부터 30분 뒤까지 허용합니다.
  */
 @Service
 public class EntryService {
@@ -71,7 +66,12 @@ public class EntryService {
         this.clock = clock;
     }
 
-    /** N17 — 결제된 내 예매 · 입장 전 · 회차 입장 시간에만. 남의 예매는 404 */
+    /**
+     * N17 - 결제된 내 예매, 입장 전, 회차 입장 시간에만. 남의 예매는 404
+     *
+     * @param userId 조회하거나 처리할 회원 ID
+     * @param bookingId 예매 ID
+     */
     @Transactional(readOnly = true)
     public EntryQr issue(long userId, long bookingId) {
         BookingEntity b = bookingRepository.findByIdAndUserId(bookingId, userId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
@@ -87,10 +87,7 @@ public class EntryService {
         return new EntryQr(qr.token(), OffsetDateTime.ofInstant(qr.expiresAt(), ZoneOffset.UTC));
     }
 
-    /**
-     * 검표 화면의 공연 고르기 — 지금 입장이 열린 회차가 있는 공연. 검표는 공연 단위라 공연마다 한 줄
-     * (회차 둘이 동시에 열려 있으면 먼저 시작하는 회차 · 회차가 90분 넘게 떨어져 있으면 생기지 않음)
-     */
+    /** 검표 가능한 공연 목록을 조회합니다. */
     @Transactional(readOnly = true)
     public List<ConcertRef> openConcerts() {
         OffsetDateTime now = OffsetDateTime.now(clock);
@@ -110,8 +107,12 @@ public class EntryService {
     }
 
     /**
-     * 검표 — 순서: QR 형식 · 서명(ENTRY_QR_INVALID) → 검표 중인 공연(WRONG_CONCERT) → 회차 입장 시간(ENTRY_NOT_OPEN · ENTRY_CLOSED)
-     * → QR 만료(ENTRY_QR_EXPIRED) → 입장 기록 (한 번만 · 동시에 두 번 찍어도 1행)
+     * 검표 - 순서: QR 형식, 서명(ENTRY_QR_INVALID) -> 검표 중인 공연(WRONG_CONCERT) -> 회차 입장 시간(ENTRY_NOT_OPEN, ENTRY_CLOSED)
+     * -> QR 만료(ENTRY_QR_EXPIRED) -> 입장 기록 (한 번만, 동시에 두 번 찍어도 1행)
+     *
+     * @param concertId 공연 ID
+     * @param token 검증하거나 저장할 토큰
+     * @param checkerId 검표 관리자 ID
      */
     @Transactional
     public CheckInResult checkIn(long concertId, String token, long checkerId) {
@@ -126,7 +127,7 @@ public class EntryService {
             if (b.getCheckedInAt() != null) {
                 throw new GeneralException(BookingErrorCode.ALREADY_CHECKED_IN).with("checkedInAt", b.getCheckedInAt());
             }
-            throw new GeneralException(BookingErrorCode.ENTRY_NOT_AVAILABLE, "취소된 예매입니다");   // QR 을 받은 뒤 환불 · 탈퇴 정리됨
+            throw new GeneralException(BookingErrorCode.ENTRY_NOT_AVAILABLE, "취소된 예매입니다");   // QR 을 받은 뒤 환불, 탈퇴 정리됨
         }
         log.info("booking_checked_in bookingId={} concertId={} sessionId={} checkerId={}", qr.bookingId(), concertId,
                 booking.getSessionId(), checkerId);
@@ -136,7 +137,7 @@ public class EntryService {
         return new CheckInResult(qr.bookingId(), seats, now);
     }
 
-    /** 입장 시간 밖이면 409 — 열리기 전은 opensAt, 마감 뒤는 closesAt 을 함께 돌려줍니다 */
+    /** 입장 시간 밖이면 409 - 열리기 전은 opensAt, 마감 뒤는 closesAt 을 함께 돌려줍니다 */
     private void requireOpen(OffsetDateTime sessionStartsAt, OffsetDateTime now) {
         if (window.notOpenYet(sessionStartsAt, now)) {
             throw new GeneralException(BookingErrorCode.ENTRY_NOT_OPEN,

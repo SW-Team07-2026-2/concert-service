@@ -25,10 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/**
- * 내부 — 관리자 공연장 · 공연 등록과 수정. Studio 가 검수를 마친 데이터만 보냅니다 (수집 데이터도 Studio 를 거침).
- * X-Internal-Token(iss=studio) 필수 · camelCase. 공연장 배치는 InternalLayoutController, 좌석 가격은 InternalSeatController.
- */
+/** Studio -> Concert 내부 관리자 API로 공연장, 공연, 라인업과 공지를 등록하고 수정합니다. */
 @RestController
 public class InternalAdminConcertController {
 
@@ -40,45 +37,90 @@ public class InternalAdminConcertController {
         this.noticeService = noticeService;
     }
 
+    /**
+     * 공연장을 등록합니다.
+     *
+     * @param request 등록할 공연장 정보
+     */
     @PostMapping("/internal/admin/concerts/venues")
     public ApiResponse<VenueView> createVenue(@Valid @RequestBody VenueCreateRequest request) {
         return ApiResponse.onSuccess(concertAdminService.createVenue(request));
     }
 
+    /**
+     * 공연과 회차를 등록합니다.
+     *
+     * @param request 등록할 공연과 회차 정보
+     */
     @PostMapping("/internal/admin/concerts")
     public ApiResponse<ConcertDetail> create(@Valid @RequestBody ConcertCreateRequest request) {
         return ApiResponse.onSuccess(concertAdminService.create(request));
     }
 
+    /**
+     * 공연과 회차 정보를 수정합니다.
+     *
+     * @param concertId 공연 ID
+     * @param request 수정할 공연과 회차 정보
+     */
     @PatchMapping("/internal/admin/concerts/{concertId}")
     public ApiResponse<ConcertDetail> update(@PathVariable @Positive long concertId, @Valid @RequestBody ConcertUpdateRequest request) {
         return ApiResponse.onSuccess(concertAdminService.update(concertId, request));
     }
 
-    /** 라인업 전체 교체 — 차례로 공개될 때마다 지금까지의 전체 목록을 보냅니다. 새로 추가된 아티스트의 팔로워에게 알림이 갑니다 */
+    /**
+     * 공연 라인업을 교체합니다.
+     *
+     * @param concertId 공연 ID
+     * @param request 변경할 라인업 아티스트 목록
+     */
     @PutMapping("/internal/admin/concerts/{concertId}/lineup")
     public ApiResponse<ConcertDetail> replaceLineup(@PathVariable @Positive long concertId, @Valid @RequestBody LineupRequest request) {
         return ApiResponse.onSuccess(concertAdminService.replaceLineup(concertId, request.artistIds()));
     }
 
-    // ── 공연 변경 공지 (11/18) — 새 공지만 알림 (라인업 팔로워 + 확정 예매자) ──
+    // ── 공연 변경 공지 - 새 공지만 알림 (라인업 팔로워 + 확정 예매자) ──
 
+    /**
+     * InternalAdminConcert 공지 목록을 조회합니다.
+     *
+     * @param concertId 공연 ID
+     */
     @GetMapping("/internal/admin/concerts/{concertId}/notices")
     public ApiResponse<List<NoticeView>> notices(@PathVariable @Positive long concertId) {
         return ApiResponse.onSuccess(noticeService.list(concertId));
     }
 
+    /**
+     * 공연 변경 공지를 등록합니다.
+     *
+     * @param concertId 공연 ID
+     * @param request 등록할 공연 공지
+     */
     @PostMapping("/internal/admin/concerts/{concertId}/notices")
     public ApiResponse<NoticeView> createNotice(@PathVariable @Positive long concertId, @Valid @RequestBody NoticeCreateRequest request) {
         return ApiResponse.onSuccess(noticeService.create(concertId, request));
     }
 
+    /**
+     * 공연 변경 공지를 수정합니다.
+     *
+     * @param concertId 공연 ID
+     * @param noticeId 공연 공지 ID
+     * @param request 수정할 공연 공지
+     */
     @PatchMapping("/internal/admin/concerts/{concertId}/notices/{noticeId}")
     public ApiResponse<NoticeView> updateNotice(@PathVariable @Positive long concertId, @PathVariable @Positive long noticeId,
                                                 @Valid @RequestBody NoticeUpdateRequest request) {
         return ApiResponse.onSuccess(noticeService.update(concertId, noticeId, request));
     }
 
+    /**
+     * 공연 변경 공지를 삭제합니다.
+     *
+     * @param concertId 공연 ID
+     * @param noticeId 공연 공지 ID
+     */
     @DeleteMapping("/internal/admin/concerts/{concertId}/notices/{noticeId}")
     public ApiResponse<Void> deleteNotice(@PathVariable @Positive long concertId, @PathVariable @Positive long noticeId) {
         noticeService.delete(concertId, noticeId);

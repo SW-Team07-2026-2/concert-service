@@ -71,7 +71,7 @@ public interface ConcertSeatJpaRepository extends JpaRepository<ConcertSeatEntit
             """, nativeQuery = true)
     List<SeatMapRow> findSeatMap(@Param("concertId") long concertId, @Param("sessionId") long sessionId);
 
-    /** 좌석 화면(findSeatMap)과 같은 상태 기준 — uq_concert_seat 로 이 공연 좌석을 셉니다 (11/27 아직 시작하지 않은 회차만) */
+    /** 좌석 화면(findSeatMap)과 같은 상태 기준 - uq_concert_seat 로 이 공연 좌석을 셉니다 (아직 시작하지 않은 회차만) */
     @Override
     @Query(value = """
             SELECT count(*) AS total,
@@ -100,7 +100,7 @@ public interface ConcertSeatJpaRepository extends JpaRepository<ConcertSeatEntit
             """, nativeQuery = true)
     long countVenueSeats(@Param("venueId") long venueId, @Param("seatIds") Long[] seatIds);
 
-    /** 한 문장 — 좌석 1만 개도 왕복 1번 (IDENTITY 라 Hibernate 배치 INSERT 가 꺼져 있습니다) · 11/27 공연의 모든 회차에 같은 가격 */
+    /** 한 문장 - 좌석 1만 개도 왕복 1번 (IDENTITY 라 Hibernate 배치 INSERT 가 꺼져 있습니다), 공연의 모든 회차에 같은 가격 */
     @Override
     @Modifying
     @Query(value = """
@@ -115,7 +115,7 @@ public interface ConcertSeatJpaRepository extends JpaRepository<ConcertSeatEntit
     int upsertPrices(@Param("concertId") long concertId, @Param("seatIds") Long[] seatIds,
                      @Param("prices") Integer[] prices);
 
-    /** 같은 좌석은 판매 가능한 행의 가격을 먼저 (선점 · 판매된 좌석은 가격을 바꾸지 않아 옛 값일 수 있음) */
+    /** 같은 좌석은 판매 가능한 행의 가격을 먼저 (선점, 판매된 좌석은 가격을 바꾸지 않아 옛 값일 수 있음) */
     @Override
     @Modifying
     @Query(value = """

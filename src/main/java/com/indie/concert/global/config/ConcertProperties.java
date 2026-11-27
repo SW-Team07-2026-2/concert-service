@@ -8,7 +8,7 @@ import java.util.List;
 public record ConcertProperties(Internal internal, InternalToken internalToken, Payment payment, String zone,
                                 Booking booking, Queue queue, Page page, Cache cache, Outbox outbox, Redis redis, Entry entry) {
 
-    /** newsIssuers — 11/19 POST /internal/concerts/artists/latest 만 부를 수 있는 발급자(catalog · 팔로우 탭) */
+    /** newsIssuers - POST /internal/concerts/artists/latest 만 부를 수 있는 발급자(catalog, 팔로우 탭) */
     public record Internal(String expectedAudience, List<String> allowedIssuers, List<String> newsIssuers, long clockSkewSeconds) {}
 
     public record InternalToken(String issuer, long ttlSeconds) {}
@@ -16,7 +16,7 @@ public record ConcertProperties(Internal internal, InternalToken internalToken, 
     public record Payment(String baseUrl, int connectTimeoutMs, int readTimeoutMs) {}
 
     /**
-     * 11/04 77A 선점 — holdMinutes = 화면 타이머 · holdGraceSeconds = 그 뒤에도 서버가 선점을 지켜 주는 시간 (서버 마감 = 합)
+     * 77A 선점 - holdMinutes = 화면 타이머, holdGraceSeconds = 그 뒤에도 서버가 선점을 지켜 주는 시간 (서버 마감 = 합)
      * payingCheckSeconds = 결제 승인 응답을 못 받은 PAYING 을 정리가 Payment 에 묻기까지 (81A)
      */
     public record Booking(long holdMinutes, long holdGraceSeconds, long payingCheckSeconds, long cancelDeadlineHours,
@@ -36,6 +36,6 @@ public record ConcertProperties(Internal internal, InternalToken internalToken, 
 
     public record Node(String host, int port) {}
 
-    /** 11/27 입장 시간 = [회차 시작 − openBeforeMinutes, 회차 시작 + closeAfterMinutes) — QR 발급 · 검표 모두 이 시간에만 */
+    /** 입장 시간 = [회차 시작 - openBeforeMinutes, 회차 시작 + closeAfterMinutes) - QR 발급, 검표 모두 이 시간에만 */
     public record Entry(long qrTtlSeconds, long openBeforeMinutes, long closeAfterMinutes) {}
 }

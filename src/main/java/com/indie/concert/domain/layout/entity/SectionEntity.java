@@ -13,9 +13,9 @@ import org.hibernate.type.SqlTypes;
 import java.math.BigDecimal;
 
 /**
- * section — 층 안의 구역. 모양이 제각각이라 꼭짓점 목록(shape)과 무대 기준 기울기(angle)로 저장합니다.
- * shape 는 [[x, y], ...] JSON (무대 그리기 캔버스 기준 0~1) — 프론트가 그대로 다각형으로 그립니다.
- * 쓰기는 LayoutRepository 의 upsert 한 문장으로만 합니다 (같은 구역을 다시 보내면 모양 · 기울기를 덮어씀).
+ * section - 층 안의 구역. 모양이 제각각이라 꼭짓점 목록(shape)과 무대 기준 기울기(angle)로 저장합니다.
+ * shape 는 [[x, y], ...] JSON (무대 그리기 캔버스 기준 0~1) - 프론트가 그대로 다각형으로 그립니다.
+ * 쓰기는 LayoutRepository 의 upsert 한 문장으로만 합니다 (같은 구역을 다시 보내면 모양, 기울기를 덮어씀).
  */
 @Entity
 @Table(name = "section", uniqueConstraints = @UniqueConstraint(name = "uq_section", columnNames = {"floor_id", "name"}))

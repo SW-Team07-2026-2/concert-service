@@ -11,8 +11,8 @@ import jakarta.persistence.UniqueConstraint;
 import java.math.BigDecimal;
 
 /**
- * seat — 공연장 좌석의 위치만 (공연이 바뀌어도 그대로). 판매 상태 · 가격은 공연마다 concert_seat 에 있습니다.
- * x · y 는 무대 그리기 캔버스 기준 0~1, angle 은 무대 기준 기울기(도). 쓰기는 LayoutRepository 의 unnest 한 문장으로만 합니다.
+ * seat - 공연장 좌석의 위치만 (공연이 바뀌어도 그대로). 판매 상태, 가격은 공연마다 concert_seat 에 있습니다.
+ * x, y 는 무대 그리기 캔버스 기준 0~1, angle 은 무대 기준 기울기(도). 쓰기는 LayoutRepository 의 unnest 한 문장으로만 합니다.
  */
 @Entity
 @Table(name = "seat", uniqueConstraints = @UniqueConstraint(name = "uq_seat_position",

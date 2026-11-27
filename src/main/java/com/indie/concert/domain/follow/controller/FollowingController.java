@@ -18,11 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/**
- * 11/19 공연 팔로우 탭 (프론트 요구 1-1 · 1-2 · 1-3 · 2-2) — 로그인 필요 · 내가 팔로우한 아티스트가 나오는 공연만.
- * q 는 선택(공연 제목 · 라인업 아티스트 이름 · 공연장 이름 LIKE). 칩은 여러 개(같은 칩 안은 OR, 서로 다른 칩끼리는 AND).
- * saleStatus 를 안 고르면 지금 이후 공연만 · 고르면 지난 공연(CLOSED)도. sort — RECENT_FOLLOW(기본) · FOLLOWERS · UPDATED
- */
+/** 로그인한 프론트 -> Gateway -> Concert -> Member 팔로우 조회 후 공연 목록을 반환합니다. */
 @RestController
 public class FollowingController {
 
@@ -34,6 +30,19 @@ public class FollowingController {
         this.pageSize = pageSize;
     }
 
+    /**
+     * 팔로우한 아티스트가 참여하는 공연을 조회합니다.
+     *
+     * @param userId 조회하거나 처리할 회원 ID
+     * @param q 검색어
+     * @param region 공연장 지역 필터
+     * @param genre 장르 필터 목록
+     * @param type 처리할 종류
+     * @param saleStatus 판매 상태 필터 목록
+     * @param sort 목록 정렬 기준
+     * @param page 0부터 시작하는 페이지 번호
+     * @param size 페이지당 조회 개수
+     */
     @GetMapping("/api/concerts/following")
     public ApiResponse<PageResult<ConcertSummary>> concerts(@CurrentUser Long userId,
                                                             @RequestParam(required = false) @Size(max = 100) String q,

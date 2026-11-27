@@ -13,12 +13,12 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
-/** 쓰기는 QueueService 가 트랜잭션 없이 부르므로 (JDBC 때와 같게) 각 문장이 스스로 트랜잭션을 엽니다 — 있으면 합류 */
+/** 쓰기는 QueueService 가 트랜잭션 없이 부르므로 (JDBC 때와 같게) 각 문장이 스스로 트랜잭션을 엽니다 - 있으면 합류 */
 public interface QueueEntryJpaRepository extends JpaRepository<QueueEntryEntity, Long> {
 
     /**
-     * 배치 upsert 한 문장 — 배열 3개를 unnest 로 행으로 펼칩니다 (1만 명도 왕복 1번).
-     * 기존 seq 보다 <b>클 때만</b> 덮어씁니다 (스냅샷 · 재진입).
+     * 배치 upsert 한 문장 - 배열 3개를 unnest 로 행으로 펼칩니다 (1만 명도 왕복 1번).
+     * 기존 seq 보다 <b>클 때만</b> 덮어씁니다 (스냅샷, 재진입).
      */
     @Modifying
     @Transactional
@@ -36,7 +36,7 @@ public interface QueueEntryJpaRepository extends JpaRepository<QueueEntryEntity,
                       @Param("admittedAt") OffsetDateTime admittedAt, @Param("userIds") Long[] userIds,
                       @Param("seqs") Long[] seqs, @Param("tokens") String[] tokens);
 
-    /** upsertIfNewer 와 같고 seq 가 <b>같아도</b> 덮어씁니다 (입장 · 이탈 — 같은 순번의 상태 변화) */
+    /** upsertIfNewer 와 같고 seq 가 <b>같아도</b> 덮어씁니다 (입장, 이탈 - 같은 순번의 상태 변화) */
     @Modifying
     @Transactional
     @Query(value = """
@@ -64,7 +64,7 @@ public interface QueueEntryJpaRepository extends JpaRepository<QueueEntryEntity,
     List<QueueEntryRepository.ActiveEntry> findByConcertIdAndStatusAndAdmittedAtAfterAndEntryTokenIsNotNull(
             long concertId, QueueEntryEntity.Status status, OffsetDateTime since);
 
-    /** (user_id, seq) 만 — 커버링 인덱스 idx_queue_rebuild 로 Index Only Scan */
+    /** (user_id, seq) 만 - 커버링 인덱스 idx_queue_rebuild 로 Index Only Scan */
     List<QueueMember> findByConcertIdAndStatusAndSeqGreaterThanOrderBySeq(
             long concertId, QueueEntryEntity.Status status, long seq, Limit limit);
 

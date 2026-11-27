@@ -8,7 +8,7 @@ import jakarta.persistence.Table;
 import java.io.Serializable;
 import java.util.Objects;
 
-/** booking_seat — 예매가 잡았던 공연 좌석 (1인 N매면 N행). concert_seat.booking_id 는 취소되면 비워지므로 "어느 좌석이었나"는 여기 남습니다 */
+/** booking_seat - 예매가 잡았던 공연 좌석 (1인 N매면 N행). concert_seat.booking_id 는 취소되면 비워지므로 "어느 좌석이었나"는 여기 남습니다 */
 @Entity
 @Table(name = "booking_seat")
 @IdClass(BookingSeatEntity.Key.class)

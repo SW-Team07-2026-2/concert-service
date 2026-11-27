@@ -25,20 +25,8 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
- * 대기열 Redis (16 §1 · 08 §8.2). 키 — 모두 TTL 이 있습니다 (noeviction 은 메모리가 차면 쓰기를 거부하므로, 16 §4)
- * <pre>
- * queue:concert:{id}        ZSET  member=userId · score=seq        공연 시작 + 1일
- * queue:seq:{id}            INCR  단조 증가 순번                    〃
- * queue:ready:{id}          센티넬 — 없으면 재구성                   〃
- * queue:snapshot:{id}       DB 에 반영한 마지막 seq                  〃
- * queue:alive:{id}:{uid}    생존 신호                               15초
- * entry:{id}:{uid}          입장 토큰 (DB 에도 · 복구 때 남은 시간만큼) 7분
- * queue:admitter:{id}       입장 처리기 리더                         5초 (리더가 연장)
- * queue:snapshotter:{id}    스냅샷 차례                              4초
- * queue:rebuild:{id}        재구성 락                                60초
- * </pre>
- * Lua 는 resources/redis/*.lua (62B).
- * 🔴 입장 처리 · 토큰 복구 스크립트가 KEYS 밖의 키(alive · entry)를 만집니다 — 단일 인스턴스 전제. 클러스터로 가면 해시태그가 필요합니다.
+ * 대기열 순번, 생존 신호와 입장 토큰을 인증용 Redis에 보관합니다.
+ * 키별 TTL을 적용하며 DB 스냅샷과 센티넬로 유실된 순번을 복구합니다.
  */
 @Component
 public class RedisQueueStore implements QueueStore {
@@ -46,11 +34,11 @@ public class RedisQueueStore implements QueueStore {
     private static final RedisScript<List> ENTER =
             RedisScript.of(new ClassPathResource("redis/queue-enter.lua"), List.class);
 
-    /** 반환 — [uid, seq, 1(입장)|0(이탈), uid, seq, …] */
+    /** 반환 - [uid, seq, 1(입장)|0(이탈), uid, seq, ...] */
     private static final RedisScript<List> ADMIT =
             RedisScript.of(new ClassPathResource("redis/queue-admit.lua"), List.class);
 
-    /** ARGV — concertId, (uid, token, ttlMs) × N */
+    /** ARGV - concertId, (uid, token, ttlMs) * N */
     private static final RedisScript<Long> RESTORE_ENTRIES =
             RedisScript.of(new ClassPathResource("redis/queue-restore-entries.lua"), Long.class);
 
@@ -203,7 +191,7 @@ public class RedisQueueStore implements QueueStore {
         Set<ZSetOperations.TypedTuple<String>> tuples = members.stream()
                 .map(m -> ZSetOperations.TypedTuple.of(String.valueOf(m.userId()), (double) m.seq()))
                 .collect(Collectors.toSet());
-        call(() -> redis.opsForZSet().addIfAbsent(queueKey(concertId), tuples));   // ZADD NX — 재구성 중 새로 들어온 순번을 덮지 않음
+        call(() -> redis.opsForZSet().addIfAbsent(queueKey(concertId), tuples));   // ZADD NX - 재구성 중 새로 들어온 순번을 덮지 않음
     }
 
     @Override

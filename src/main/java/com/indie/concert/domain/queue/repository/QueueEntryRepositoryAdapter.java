@@ -11,8 +11,8 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * queue_entry 배치 upsert — 1만 명이 들어와도 DB 에는 5초마다 한 문장 (16 §1).
- * 개별 INSERT 1만 번은 커밋 · 왕복이 1만 번이라 불가능합니다.
+ * queue_entry 배치 upsert - 1만 명이 들어와도 DB 에는 5초마다 한 문장 (16 §1).
+ * 개별 INSERT 1만 번은 커밋, 왕복이 1만 번이라 불가능합니다.
  */
 @Repository
 public class QueueEntryRepositoryAdapter implements QueueEntryRepository {
@@ -23,7 +23,7 @@ public class QueueEntryRepositoryAdapter implements QueueEntryRepository {
         this.jpa = jpa;
     }
 
-    /** 같은 seq 는 덮어쓰지 않습니다 — 스냅샷보다 먼저 기록된 입장 · 이탈을 WAITING 으로 되돌리면 안 됩니다 */
+    /** 같은 seq 는 덮어쓰지 않습니다 - 스냅샷보다 먼저 기록된 입장, 이탈을 WAITING 으로 되돌리면 안 됩니다 */
     @Override
     public void upsertWaiting(long concertId, List<QueueMember> members) {
         if (members.isEmpty()) return;
@@ -40,7 +40,7 @@ public class QueueEntryRepositoryAdapter implements QueueEntryRepository {
                 members.stream().map(AdmittedMember::entryToken).toArray(String[]::new));
     }
 
-    /** WAITING · LEFT 는 토큰을 비웁니다 */
+    /** WAITING, LEFT 는 토큰을 비웁니다 */
     @Override
     public void markLeft(long concertId, List<QueueMember> members) {
         if (members.isEmpty()) return;

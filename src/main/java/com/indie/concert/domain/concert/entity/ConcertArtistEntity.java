@@ -10,7 +10,7 @@ import java.io.Serializable;
 import java.util.Objects;
 
 /**
- * concert_artist — 라인업 (공연 ─< concert_artist >─ 아티스트). billingOrder 1 = 헤드라이너.
+ * concert_artist - 라인업 (공연 ─< concert_artist >─ 아티스트). billingOrder 1 = 헤드라이너.
  * 단독 공연(SOLO)은 1명, 페스티벌은 1명 이상. 라인업 수정은 전체 교체입니다 (ConcertAdminService.replaceLineup).
  */
 @Entity

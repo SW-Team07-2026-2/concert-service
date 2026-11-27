@@ -8,7 +8,7 @@ import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 
-/** 좌석 하나 — row · number 는 1 부터 · x · y 는 캔버스 기준 0~1 · angle 은 무대 기준 기울기(도) */
+/** 좌석 하나 - row, number 는 1 부터, x, y 는 캔버스 기준 0~1, angle 은 무대 기준 기울기(도) */
 public record SeatPoint(@Size(max = 64) String seatId,
                         @NotNull @Positive Integer row,
                         @NotNull @Positive Integer number,

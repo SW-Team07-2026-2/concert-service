@@ -10,10 +10,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * 내부 I8 · I9 — 대기열 운영 (X-Internal-Token · Gateway 라우트 없음 → 외부에서는 404).
- * I8 은 자동 복구가 실패했을 때의 수동 트리거입니다 — 평상시엔 조회 · 입장 처리 경로에서 자동으로 복구됩니다.
- */
+/** 운영 내부 호출 -> Concert 대기열 복구와 메트릭 API. 평상시 복구는 대기열 조회 경로에서 자동 처리합니다. */
 @RestController
 public class InternalQueueController {
 
@@ -23,11 +20,21 @@ public class InternalQueueController {
         this.queueService = queueService;
     }
 
+    /**
+     * DB 스냅샷으로 Redis 대기열을 수동 복구합니다.
+     *
+     * @param concertId 공연 ID
+     */
     @PostMapping("/internal/concerts/{concertId}/queue/rebuild")
     public ApiResponse<QueueRebuilt> rebuild(@PathVariable @Positive long concertId) {
         return ApiResponse.onSuccess(queueService.rebuildManually(concertId));
     }
 
+    /**
+     * 공연 대기열의 운영 메트릭을 반환합니다.
+     *
+     * @param concertId 공연 ID
+     */
     @GetMapping("/internal/concerts/{concertId}/queue/metrics")
     public ApiResponse<QueueMetrics> metrics(@PathVariable @Positive long concertId) {
         return ApiResponse.onSuccess(queueService.metrics(concertId));

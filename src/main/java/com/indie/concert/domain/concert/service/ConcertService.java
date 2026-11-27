@@ -44,8 +44,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 공연 조회 (N1 ~ N3) — 공개 API. 하루 경계는 Asia/Seoul 입니다 (DB 는 UTC).
- * 라인업의 아티스트 이름 · 장르는 artist 복제 테이블에서 읽어 Catalog 를 부르지 않습니다 (Catalog → Concert 동기 호출도 없음 — 08 §3 의존 규칙).
+ * 공연 조회 (N1 ~ N3) - 공개 API. 하루 경계는 Asia/Seoul 입니다 (DB 는 UTC).
+ * 라인업의 아티스트 이름, 장르는 artist 복제 테이블에서 읽어 Catalog 를 부르지 않습니다 (Catalog -> Concert 동기 호출도 없음 - 08 §3 의존 규칙).
  */
 @Service
 public class ConcertService {
@@ -63,8 +63,8 @@ public class ConcertService {
     private final Clock clock;
 
     /**
-     * ✏️ 11/25 k6 — 공개 공연 상세(N2)는 오픈 직후 모두가 부르고 요청마다 DB 를 3번 넘게 읽습니다 (공연 · 공연장 · 라인업).
-     * 누구에게나 같은 응답이라 Pod 메모리에 3초 둡니다 — 캐시가 비면 한 요청만 DB 로, 나머지는 그 결과를 기다립니다.
+     * k6 - 공개 공연 상세(N2)는 오픈 직후 모두가 부르고 요청마다 DB 를 3번 넘게 읽습니다 (공연, 공연장, 라인업).
+     * 누구에게나 같은 응답이라 Pod 메모리에 3초 둡니다 - 캐시가 비면 한 요청만 DB 로, 나머지는 그 결과를 기다립니다.
      * 관리자 수정은 최대 3초 늦게 보입니다 (관리자 응답은 get 으로 바로 읽음)
      */
     private final Cache<Long, ConcertDetail> details = Caffeine.newBuilder()
@@ -81,9 +81,21 @@ public class ConcertService {
     }
 
     /**
-     * N1 — from 이 없으면 지금 이후 (지난 공연 제외). to 는 그날까지 포함. 11/27 회차가 [from, to] 에 걸치는 공연 (남은 회차가 있으면 나옴)
-     * 11/19 팔로우 탭 — 목록 조건은 여러 개 · saleStatus 를 고르면 기본 '지금 이후' 를 풀어 지난 공연(CLOSED)도 거릅니다 ·
-     * sort 없으면 공연일 가까운 순 · ARTIST_ORDER 는 artistIds 순서 · UPDATED 는 최근 수정순
+     * N1 - from 이 없으면 지금 이후 (지난 공연 제외). to 는 그날까지 포함. 회차가 [from, to] 에 걸치는 공연 (남은 회차가 있으면 나옴)
+     * 팔로우 탭 - 목록 조건은 여러 개, saleStatus 를 고르면 기본 '지금 이후' 를 풀어 지난 공연(CLOSED)도 거릅니다, * sort 없으면 공연일 가까운 순, ARTIST_ORDER 는 artistIds 순서, UPDATED 는 최근 수정순
+     *
+     * @param from 공연 조회 시작일
+     * @param to 공연 조회 종료일
+     * @param regions 공연장 지역 필터 목록
+     * @param genres 장르 필터 목록
+     * @param types 공연 종류 필터 목록
+     * @param saleStatuses 판매 상태 필터 목록
+     * @param artistId 아티스트 ID
+     * @param artistIds 대상 아티스트 ID 목록
+     * @param q 검색어
+     * @param sort 목록 정렬 기준
+     * @param page 0부터 시작하는 페이지 번호
+     * @param size 페이지당 조회 개수
      */
     @Transactional(readOnly = true)
     public PageResult<ConcertSummary> list(LocalDate from, LocalDate to, List<Region> regions, List<Genre> genres,
@@ -92,7 +104,21 @@ public class ConcertService {
         return listOf(from, to, regions, genres, types, saleStatuses, artistIds(artistId, artistIds, sort), q, sort, page, size);
     }
 
-    /** 검증을 마친 아티스트 ID 목록으로 — 팔로우 탭은 Member 에서 받은 순서를 그대로 넘깁니다 (상한 200 은 쿼리 문자열용) */
+    /**
+     * 검증을 마친 아티스트 ID 목록으로 - 팔로우 탭은 Member 에서 받은 순서를 그대로 넘깁니다 (상한 200 은 쿼리 문자열용)
+     *
+     * @param from 공연 조회 시작일
+     * @param to 공연 조회 종료일
+     * @param regions 공연장 지역 필터 목록
+     * @param genres 장르 필터 목록
+     * @param types 공연 종류 필터 목록
+     * @param saleStatuses 판매 상태 필터 목록
+     * @param artistIds 대상 아티스트 ID 목록
+     * @param q 검색어
+     * @param sort 목록 정렬 기준
+     * @param page 0부터 시작하는 페이지 번호
+     * @param size 페이지당 조회 개수
+     */
     @Transactional(readOnly = true)
     public PageResult<ConcertSummary> listOf(LocalDate from, LocalDate to, List<Region> regions, List<Genre> genres,
                                              List<ConcertEntity.Type> types, List<ConcertEntity.SaleStatus> saleStatuses,
@@ -110,7 +136,7 @@ public class ConcertService {
         return PageResult.of(concertRepository.search(filter, PageRequest.of(page, size, order)), this::summaries);
     }
 
-    /** artistId(하나 · 기존) · artistIds(여러 개) 중 하나 → 순서를 지킨 목록 (중복은 앞의 것) */
+    /** artistId(하나, 기존), artistIds(여러 개) 중 하나 -> 순서를 지킨 목록 (중복은 앞의 것) */
     static List<Long> artistIds(Long artistId, List<Long> artistIds, ListSort sort) {
         if (artistId != null && artistIds != null) {
             throw new GeneralException(CommonErrorCode.INVALID_REQUEST, "artistId 와 artistIds 는 하나만 보냅니다");
@@ -125,7 +151,11 @@ public class ConcertService {
         return ids;
     }
 
-    /** N2 공개 — get 을 3초 캐시. 판매 상태는 요청 시각으로 다시 계산합니다 (오픈 시각이 지나면 캐시와 상관없이 바로 ON_SALE · 회차도 같음) */
+    /**
+     * 공개용 공연 상세를 조회합니다.
+     *
+     * @param id 공연 ID
+     */
     public ConcertDetail getPublic(long id) {
         ConcertDetail d = details.get(id, this::get);
         OffsetDateTime now = OffsetDateTime.now(clock);
@@ -133,7 +163,11 @@ public class ConcertService {
                 .map(s -> s.withSaleStatus(ConcertEntity.saleStatus(s.startsAt(), d.bookingOpenAt(), now).name())).toList());
     }
 
-    /** N2 — 공연 상세 + 공연장 + 판매 상태 + 예매 오픈 시각 (08 §7) */
+    /**
+     * N2 - 공연 상세 + 공연장 + 판매 상태 + 예매 오픈 시각 (08 §7)
+     *
+     * @param id 공연 ID
+     */
     @Transactional(readOnly = true)
     public ConcertDetail get(long id) {
         ConcertEntity c = concertRepository.findById(id).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
@@ -150,8 +184,10 @@ public class ConcertService {
     }
 
     /**
-     * N3 — 월 단위 · 날짜별 묶음. 팔로우 기준 보기는 프론트가 팔로우 목록을 artistIds 로 넘깁니다 (08 §7).
-     * 11/27 회차마다 그 날짜에 한 줄 (여러 날 공연은 회차가 있는 날마다 나옴 · 그달 회차만)
+     * 월별 공연 일정을 조회합니다.
+     *
+     * @param month 조회할 연월(yyyy-MM)
+     * @param artistIds 대상 아티스트 ID 목록
      */
     @Transactional(readOnly = true)
     public ConcertCalendar calendar(String month, List<Long> artistIds) {
