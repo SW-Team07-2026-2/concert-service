@@ -10,9 +10,8 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 /**
- * Catalog artist.updated → artist 복제 테이블 · 그 아티스트 단독 공연의 장르.
- * Catalog 는 생성 · 변경마다 전체 값(name · genre)을 보냅니다 — genre 가 null 이면 장르 없음입니다.
- * 파티션 키가 artistId 라 같은 아티스트의 변경은 순서대로 오고, 재전달된 옛 이벤트는 occurredAt 비교로 무시합니다.
+ * Catalog -> Kafka artist.updated -> Concert 아티스트 사본과 단독 공연 장르 갱신.
+ * 이벤트 시각을 비교해 이전 이벤트가 새 값을 덮어쓰지 않도록 합니다.
  */
 @Component
 public class ArtistEventConsumer {
@@ -25,6 +24,12 @@ public class ArtistEventConsumer {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 아티스트 변경 이벤트를 복제 테이블과 공연 장르에 반영합니다.
+     *
+     * @param record Kafka에서 수신한 이벤트 레코드
+     * @param ack 처리 완료 후 오프셋을 커밋할 승인 객체
+     */
     @KafkaListener(topics = "artist.updated")
     public void onArtistUpdated(ConsumerRecord<String, String> record, Acknowledgment ack) throws JsonProcessingException {
         EventEnvelope e = EventEnvelope.parse(objectMapper, record.value());

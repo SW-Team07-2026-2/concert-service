@@ -9,8 +9,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 
 /**
- * ✏️ 11/25 좌석 화면 응답 본문 — 타이머 없는 ApiResponse JSON 바이트 + 타이머를 끼울 자리("result":{ 바로 뒤).
- * ApiResponse 는 isSuccess · code · message · result 순서라 처음 나오는 "result":{ 가 응답의 result 입니다.
+ * 좌석 화면 응답 본문 - 타이머 없는 ApiResponse JSON 바이트 + 타이머를 끼울 자리("result":{ 바로 뒤).
+ * ApiResponse 는 isSuccess, code, message, result 순서라 처음 나오는 "result":{ 가 응답의 result 입니다.
  * 타이머를 앞에 끼우면 키 순서만 다르고 내용은 Jackson 이 SeatMap.withTimer 를 직렬화한 것과 같습니다 (SeatServiceTest)
  */
 record SeatMapBody(byte[] json, int timerAt) {
@@ -24,7 +24,7 @@ record SeatMapBody(byte[] json, int timerAt) {
         return new SeatMapBody(json, at + RESULT.length);
     }
 
-    /** 사람마다 다른 타이머 — 캐시한 바이트는 바꾸지 않고 새 배열에 복사합니다 */
+    /** 사람마다 다른 타이머 - 캐시한 바이트는 바꾸지 않고 새 배열에 복사합니다 */
     byte[] withTimer(ObjectMapper objectMapper, OffsetDateTime expiresAt, long expiresIn) {
         String at = write(() -> objectMapper.writeValueAsString(expiresAt));
         byte[] timer = ("\"expiresAt\":" + at + ",\"expiresIn\":" + expiresIn + ",").getBytes(StandardCharsets.UTF_8);

@@ -3,13 +3,13 @@ package com.indie.concert.global.config;
 import org.springframework.stereotype.Component;
 
 /**
- * ✏️ 11/04 75-2 — 제한시간끼리의 관계가 설정에서 깨지면 기동 실패 (docs/30 §2).
- * 다른 서비스와의 관계(Payment ttl-minutes · Gateway 타임아웃)는 여기서 볼 수 없어 docs/30 에만 있습니다.
+ * 75-2 - 제한시간끼리의 관계가 설정에서 깨지면 기동 실패 (docs/30 §2).
+ * 다른 서비스와의 관계(Payment ttl-minutes, Gateway 타임아웃)는 여기서 볼 수 없어 docs/30 에만 있습니다.
  */
 @Component
 public class TimeLimitCheck {
 
-    static final long TOSS_APPROVE_SECONDS = 600;   // 토스 — 결제 인증 뒤 10분 안에 승인해야 함
+    static final long TOSS_APPROVE_SECONDS = 600;   // 토스 - 결제 인증 뒤 10분 안에 승인해야 함
 
     public TimeLimitCheck(ConcertProperties props) {
         check(props);
@@ -32,7 +32,7 @@ public class TimeLimitCheck {
         require(queue.leaderTtlMs() > queue.admitIntervalMs(),
                 "입장 처리기 리더 락(leader-ttl-ms = %d)은 입장 주기(admit-interval-ms = %d)보다 길어야 합니다",
                 queue.leaderTtlMs(), queue.admitIntervalMs());
-        // ✏️ 11/25 순번이 멀면 poll-max-ms 까지 늘어납니다 — 응답이 늦거나 한 번 실패해도 이탈 처리되지 않게 3번 몫
+        // 순번이 멀면 poll-max-ms 까지 늘어납니다 - 응답이 늦거나 한 번 실패해도 이탈 처리되지 않게 3번 몫
         long slowestPollMs = Math.max(queue.pollMaxMs(), queue.degradedPollAfterMs());
         require(queue.aliveTtlSeconds() * 1000 >= 3 * slowestPollMs,
                 "대기 생존 TTL(alive-ttl-seconds = %d)은 가장 긴 폴링 간격(%dms)의 3배 이상이어야 합니다 — 기다리는 사람이 이탈 처리됨",

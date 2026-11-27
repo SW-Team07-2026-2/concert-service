@@ -14,10 +14,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * 내부 — CS 관리자(Studio)의 회원 예매 조회 · 취소 대행. X-Internal-Token(iss=studio) 필수.
- * 누가 했는지는 Studio 의 작업 기록에 남습니다.
- */
+/** Studio CS 관리자 -> Concert 내부 API로 회원 예매 조회와 취소 대행. */
 @RestController
 public class InternalAdminBookingController {
 
@@ -29,7 +26,13 @@ public class InternalAdminBookingController {
         this.pageSize = pageSize;
     }
 
-    /** 회원의 예매 목록 — 최신순 커서 (내 예매 목록 N11 과 같은 모양) */
+    /**
+     * 회원의 예매 목록을 조회합니다.
+     *
+     * @param userId 조회하거나 처리할 회원 ID
+     * @param cursor 다음 조회 시작점을 나타내는 커서
+     * @param size 페이지당 조회 개수
+     */
     @GetMapping("/internal/admin/concerts/users/{userId}/bookings")
     public ApiResponse<CursorPage<BookingSummary>> bookings(@PathVariable @Positive long userId,
                                                             @RequestParam(required = false) String cursor,
@@ -38,8 +41,9 @@ public class InternalAdminBookingController {
     }
 
     /**
-     * 예매 취소 대행 — 회원 본인의 취소(N13)와 같은 규칙입니다 (입장한 예매 · 공연 24시간 전이 지난 예매는 409).
-     * 본문 { reason } 은 Studio 의 작업 기록용이라 여기서는 읽지 않습니다.
+     * 관리자가 회원을 대신해 예매를 취소합니다.
+     *
+     * @param bookingId 예매 ID
      */
     @PostMapping("/internal/admin/concerts/bookings/{bookingId}/cancel")
     public ApiResponse<BookingDetail> cancel(@PathVariable @Positive long bookingId) {

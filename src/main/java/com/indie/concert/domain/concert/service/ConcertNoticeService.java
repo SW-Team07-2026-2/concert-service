@@ -23,9 +23,9 @@ import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
- * 공연 변경 공지 (11/18) — 관리자(Studio)가 쓰고 · 고치고 · 지웁니다. 공개 공연 상세가 최신순으로 보여 줍니다.
- * 새 공지만 알림을 보냅니다 (concert.notice_posted — 라인업 팔로워 + 확정 예매자). 고치기 · 지우기는 알림이 없습니다.
- * 공연 값(일정 · 공연장 · 예매 오픈 등)은 공지와 따로 공연 수정(PATCH)으로 바꿉니다.
+ * 공연 변경 공지 - 관리자(Studio)가 쓰고, 고치고, 지웁니다. 공개 공연 상세가 최신순으로 보여 줍니다.
+ * 새 공지만 알림을 보냅니다 (concert.notice_posted - 라인업 팔로워 + 확정 예매자). 고치기, 지우기는 알림이 없습니다.
+ * 공연 값(일정, 공연장, 예매 오픈 등)은 공지와 따로 공연 수정(PATCH)으로 바꿉니다.
  */
 @Service
 public class ConcertNoticeService {
@@ -51,12 +51,23 @@ public class ConcertNoticeService {
         this.clock = clock;
     }
 
+    /**
+     * ConcertNotice 목록을 조회합니다.
+     *
+     * @param concertId 공연 ID
+     */
     @Transactional(readOnly = true)
     public List<NoticeView> list(long concertId) {
         concert(concertId);
         return notices.findByConcertIdOrderByIdDesc(concertId).stream().map(NoticeView::of).toList();
     }
 
+    /**
+     * ConcertNotice 정보를 등록합니다.
+     *
+     * @param concertId 공연 ID
+     * @param r 등록할 공연 공지
+     */
     @Transactional
     public NoticeView create(long concertId, NoticeCreateRequest r) {
         ConcertEntity c = concert(concertId);
@@ -70,6 +81,13 @@ public class ConcertNoticeService {
         return NoticeView.of(notice);
     }
 
+    /**
+     * ConcertNotice 정보를 수정합니다.
+     *
+     * @param concertId 공연 ID
+     * @param noticeId 공연 공지 ID
+     * @param r 수정할 공연 공지
+     */
     @Transactional
     public NoticeView update(long concertId, long noticeId, NoticeUpdateRequest r) {
         ConcertNoticeEntity notice = notice(concertId, noticeId);
@@ -78,6 +96,12 @@ public class ConcertNoticeService {
         return NoticeView.of(notices.save(notice));
     }
 
+    /**
+     * ConcertNotice 정보를 삭제합니다.
+     *
+     * @param concertId 공연 ID
+     * @param noticeId 공연 공지 ID
+     */
     @Transactional
     public void delete(long concertId, long noticeId) {
         notices.delete(notice(concertId, noticeId));

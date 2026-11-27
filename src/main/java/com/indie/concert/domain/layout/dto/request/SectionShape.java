@@ -11,8 +11,8 @@ import java.math.BigDecimal;
 import java.util.List;
 
 /**
- * shape — 꼭짓점 [[x, y], ...] (캔버스 기준 0~1 · 3개 이상) · angle — 무대 기준 기울기(도).
- * rows · seatCount 는 확인용 — seatCount 가 오면 seats 개수와 같아야 합니다.
+ * shape - 꼭짓점 [[x, y], ...] (캔버스 기준 0~1, 3개 이상), angle - 무대 기준 기울기(도).
+ * rows, seatCount 는 확인용 - seatCount 가 오면 seats 개수와 같아야 합니다.
  */
 public record SectionShape(@NotBlank @Size(max = 16) String name,
                            @NotNull @Size(min = 3, max = 500)

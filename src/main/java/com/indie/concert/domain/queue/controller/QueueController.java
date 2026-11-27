@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 공개 API N4 ~ N6 — 대기열. 모두 로그인 필요 (POST · DELETE 는 CSRF 도 — Gateway) */
+/** 로그인한 프론트 -> Gateway -> Concert 대기열 진입, 상태 조회와 이탈 API. */
 @RestController
 public class QueueController {
 
@@ -22,16 +22,34 @@ public class QueueController {
         this.queueService = queueService;
     }
 
+    /**
+     * 공연 대기열에 진입합니다.
+     *
+     * @param userId 조회하거나 처리할 회원 ID
+     * @param concertId 공연 ID
+     */
     @PostMapping("/api/concerts/{concertId}/queue")
     public ApiResponse<QueueStatus> enter(@CurrentUser Long userId, @PathVariable @Positive long concertId) {
         return ApiResponse.onSuccess(queueService.enter(concertId, userId));
     }
 
+    /**
+     * 대기 순번이나 입장 상태를 조회합니다.
+     *
+     * @param userId 조회하거나 처리할 회원 ID
+     * @param concertId 공연 ID
+     */
     @GetMapping("/api/concerts/{concertId}/queue/status")
     public ApiResponse<QueueStatus> status(@CurrentUser Long userId, @PathVariable @Positive long concertId) {
         return ApiResponse.onSuccess(queueService.status(concertId, userId));
     }
 
+    /**
+     * 대기열에서 이탈합니다.
+     *
+     * @param userId 조회하거나 처리할 회원 ID
+     * @param concertId 공연 ID
+     */
     @DeleteMapping("/api/concerts/{concertId}/queue")
     public ResponseEntity<Void> leave(@CurrentUser Long userId, @PathVariable @Positive long concertId) {
         queueService.leave(concertId, userId);

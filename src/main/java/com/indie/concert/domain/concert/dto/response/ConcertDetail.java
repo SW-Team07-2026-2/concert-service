@@ -4,8 +4,8 @@ import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
- * maxSeatsPerUser — 한 번에 예매할 수 있는 좌석 수 (1인 N매 · 11/27 회차마다). description · terms · requirements 는 마크다운 · 없으면 null.
- * 11/27 startsAt · lastStartsAt = 첫 · 마지막 회차 시작 · sessions = 회차 (시작 순 · 하나 이상) · saleStatus 는 마지막 회차 기준
+ * maxSeatsPerUser - 한 번에 예매할 수 있는 좌석 수 (1인 N매, 회차마다). description, terms, requirements 는 마크다운, 없으면 null.
+ * startsAt, lastStartsAt = 첫, 마지막 회차 시작, sessions = 회차 (시작 순, 하나 이상), saleStatus 는 마지막 회차 기준
  */
 public record ConcertDetail(long id, String title, String type, String genre, List<ArtistRef> artists,
                             OffsetDateTime startsAt, OffsetDateTime lastStartsAt, OffsetDateTime endsAt, Integer price,

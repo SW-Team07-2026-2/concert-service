@@ -12,14 +12,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 공연 이벤트 — 관리자 등록 · 라인업 수정 커밋에서 (outbox).
- * <pre>
- * concert.created         등록         Member: 라인업 전체 팔로워에게 알림 · AI: 인덱싱
- * concert.lineup_updated  라인업 추가   Member: 새로 추가된 아티스트(addedArtistIds)의 팔로워에게 알림
- * concert.notice_posted   변경 공지     Member: 라인업 팔로워(artistIds) + 확정 예매자(bookerUserIds)에게 알림 (11/18)
- * </pre>
- * artistIds 는 라인업 순서 (첫 번째 = 헤드라이너). artistId · artistName 은 헤드라이너 — artistIds 이전 구독자용으로 남깁니다.
- * 🔴 그 밖의 공연 정보 수정은 이벤트가 없습니다.
+ * Concert 공연 등록, 라인업 추가와 변경 공지 -> Outbox -> Kafka -> Member 알림과 AI 연동.
+ * 라인업은 순서를 유지하며 첫 아티스트를 헤드라이너로 전달합니다.
  */
 @Component
 public class ConcertEvents {

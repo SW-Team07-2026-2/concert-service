@@ -41,7 +41,7 @@ public interface LayoutJpaRepository extends JpaRepository<SectionEntity, Long>,
     @Query(value = "DELETE FROM seat WHERE section_id = :sectionId", nativeQuery = true)
     int deleteSeats(@Param("sectionId") long sectionId);
 
-    /** 한 문장 — 구역 좌석 수천 개도 왕복 1번 (IDENTITY 라 Hibernate 배치 INSERT 가 꺼져 있습니다) */
+    /** 한 문장 - 구역 좌석 수천 개도 왕복 1번 (IDENTITY 라 Hibernate 배치 INSERT 가 꺼져 있습니다) */
     @Override
     @Modifying
     @Query(value = """

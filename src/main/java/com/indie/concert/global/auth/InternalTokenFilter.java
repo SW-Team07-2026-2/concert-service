@@ -25,20 +25,13 @@ import java.util.Date;
 import java.util.List;
 
 /**
- * /internal/** 전용 — X-Internal-Token (HS256 · 공유 시크릿) 검증 (Member 명세 §13 과 동일 · aud = concert).
- * <pre>
- * ① 헤더 없음 → 401 INTERNAL_TOKEN_REQUIRED   ② 서명 · ③ iss/aud · exp 없음 → 401 INTERNAL_TOKEN_INVALID (사유는 로그)
- * ④ exp(+30초) 지남 → 401 INTERNAL_TOKEN_EXPIRED   ⑤ iss 가 allowed-issuers(studio · ops) 밖 → 401 INTERNAL_TOKEN_INVALID
- * </pre>
- * 11/13 — 수집기(Gateway /ingest/**)가 공연을 직접 넣던 경로는 없앴습니다. 공연 · 공연장 배치는 관리자(Studio)를 거쳐서만 들어옵니다.
- * ✏️ 11/19 POST /internal/concerts/artists/latest(아티스트별 최근 공연 시각)만 news-issuers(catalog)를 받습니다 — 그 토큰으로 다른 내부 API 는 못 부릅니다.
- * 🔴 이 필터 없이 배포되면 클러스터 안의 누구든 공연 · 좌석을 덮어쓰고 대기열을 재구성할 수 있습니다.
- * 🔴 X-User-Id 를 신뢰하지 않습니다 — 내부 API 의 사용자 식별은 요청 본문 값으로 합니다.
+ * 내부 토큰의 서명, 발급자, 대상과 만료 시각을 검증합니다.
+ * Studio 관리자 경로와 Catalog의 아티스트 소식 조회 경로를 분리합니다.
  */
 public class InternalTokenFilter extends OncePerRequestFilter {
 
     public static final String HEADER = "X-Internal-Token";
-    /** 11/19 팔로우 탭 업데이트순 — Catalog 가 부르는 경로 */
+    /** 팔로우 탭 업데이트순 - Catalog 가 부르는 경로 */
     public static final String NEWS_PATH = "/internal/concerts/artists/latest";
     private static final Logger log = LoggerFactory.getLogger(InternalTokenFilter.class);
 
@@ -80,11 +73,11 @@ public class InternalTokenFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
 
-    /** ② 서명 · alg · ③ aud · ④ exp — 통과하면 클레임, 아니면 거절 사유. iss 는 호출하는 쪽이 봅니다 */
+    /** 2 서명, alg, 3 aud, 4 exp - 통과하면 클레임, 아니면 거절 사유. iss 는 호출하는 쪽이 봅니다 */
     private Verified verify(String token) {
         try {
             SignedJWT jwt = SignedJWT.parse(token);
-            if (!JWSAlgorithm.HS256.equals(jwt.getHeader().getAlgorithm())) return Verified.rejected("alg");   // ★ alg 고정
+            if (!JWSAlgorithm.HS256.equals(jwt.getHeader().getAlgorithm())) return Verified.rejected("alg");   // alg 고정
             if (!jwt.verify(verifier)) return Verified.rejected("signature");
             JWTClaimsSet claims = jwt.getJWTClaimsSet();
             if (claims.getIssuer() == null) return Verified.rejected("issuer");

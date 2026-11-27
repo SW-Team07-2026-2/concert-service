@@ -27,9 +27,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 공연장 배치 — 관리자(Studio)의 무대 그리기 결과를 구역 단위로 저장합니다. 공연장 → 층 → 구역 → 좌석.
- * 같은 구역을 다시 보내면 모양 · 기울기를 덮어쓰고 좌석은 지운 뒤 새로 넣습니다.
- * 🔴 이 구역 좌석을 파는 공연(concert_seat)이 있으면 409 — 좌석 id 가 바뀌면 판매 · 예매 기록이 끊깁니다.
+ * 공연장 배치 - 관리자(Studio)의 무대 그리기 결과를 구역 단위로 저장합니다. 공연장 -> 층 -> 구역 -> 좌석.
+ * 같은 구역을 다시 보내면 모양, 기울기를 덮어쓰고 좌석은 지운 뒤 새로 넣습니다.
+ * 이 구역 좌석을 파는 공연(concert_seat)이 있으면 409 - 좌석 id 가 바뀌면 판매, 예매 기록이 끊깁니다.
  */
 @Service
 public class LayoutService {
@@ -46,7 +46,11 @@ public class LayoutService {
         this.objectMapper = objectMapper;
     }
 
-    /** 저장된 배치 — 층 · 구역 · 좌석 (쿼리 2번 — 구역 모양을 좌석마다 싣지 않게). 배치가 아직 없으면 floors 가 빈 목록 */
+    /**
+     * 저장된 배치 - 층, 구역, 좌석 (쿼리 2번 - 구역 모양을 좌석마다 싣지 않게). 배치가 아직 없으면 floors 가 빈 목록
+     *
+     * @param venueId 공연장 ID
+     */
     @Transactional(readOnly = true)
     public VenueLayout layout(long venueId) {
         venueRepository.findById(venueId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
@@ -74,6 +78,12 @@ public class LayoutService {
         }
     }
 
+    /**
+     * 공연장 구역과 좌석 배치를 저장합니다.
+     *
+     * @param venueId 공연장 ID
+     * @param request 공연장 구역과 좌석 배치
+     */
     @Transactional
     public SectionSaved saveSection(long venueId, SectionLayoutRequest request) {
         if (request.venueId() != null && request.venueId() != venueId) {
@@ -94,7 +104,7 @@ public class LayoutService {
         long floorId = layoutRepository.upsertFloor(venueId, request.floor().strip());
         long sectionId = layoutRepository.upsertSection(floorId, request.section().name().strip(),
                 json(request.section().shape()), request.section().angle());
-        if (layoutRepository.sectionInUse(sectionId)) throw new GeneralException(LayoutErrorCode.SECTION_IN_USE);   // 롤백 — 모양도 그대로
+        if (layoutRepository.sectionInUse(sectionId)) throw new GeneralException(LayoutErrorCode.SECTION_IN_USE);   // 롤백 - 모양도 그대로
         layoutRepository.deleteSeats(sectionId);
         int saved = layoutRepository.insertSeats(sectionId,
                 seats.stream().map(SeatPoint::row).toArray(Integer[]::new),

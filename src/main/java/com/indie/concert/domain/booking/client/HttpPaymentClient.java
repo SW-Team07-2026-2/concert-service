@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
-/** Concert → Payment 내부 호출 (X-Internal-Token · iss=concert · aud=payment). 타임아웃 3초 */
+/** Concert -> Payment 내부 API로 티켓 결제 준비, 승인과 취소를 요청합니다. 내부 토큰과 요청 추적 ID를 전달합니다. */
 @Component
 public class HttpPaymentClient implements PaymentClient {
 

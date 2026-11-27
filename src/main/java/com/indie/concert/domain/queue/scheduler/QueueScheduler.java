@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 import java.util.function.Consumer;
 
 /**
- * 대기열 주기 작업 트리거 — 입장 처리 1초 · 스냅샷 5초 (로직은 QueueService).
+ * 대기열 주기 작업 트리거 - 입장 처리 1초, 스냅샷 5초 (로직은 QueueService).
  * 모든 replica 에서 돌지만 공연마다 Redis 락으로 하나만 실제로 일합니다. 한 공연의 실패가 다른 공연을 막지 않게 따로 잡습니다.
  */
 @Component

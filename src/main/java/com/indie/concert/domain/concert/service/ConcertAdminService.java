@@ -38,11 +38,11 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 관리자(Studio) — 공연장 · 공연 등록과 수정. 공연은 검수를 거쳐 여기로만 들어옵니다 (수집기 직접 적재 없음).
+ * 관리자(Studio) - 공연장, 공연 등록과 수정. 공연은 검수를 거쳐 여기로만 들어옵니다 (수집기 직접 적재 없음).
  * <pre>
- * 장르   SOLO     = 라인업 아티스트의 장르 (artist.updated 로 함께 갱신 · 관리자가 정하지 않음)
- *        FESTIVAL = 관리자가 정함 (아티스트 이벤트로 덮어쓰지 않음)
- * 라인업 PUT 으로 전체 교체 — 새로 들어온 아티스트가 있으면 concert.lineup_updated (그 팔로워에게 알림)
+ * 장르 SOLO = 라인업 아티스트의 장르 (artist.updated 로 함께 갱신, 관리자가 정하지 않음)
+ * FESTIVAL = 관리자가 정함 (아티스트 이벤트로 덮어쓰지 않음)
+ * 라인업 PUT 으로 전체 교체 - 새로 들어온 아티스트가 있으면 concert.lineup_updated (그 팔로워에게 알림)
  * </pre>
  */
 @Service
@@ -80,6 +80,11 @@ public class ConcertAdminService {
         this.clock = clock;
     }
 
+    /**
+     * 공연장을 등록합니다.
+     *
+     * @param r 등록할 공연장 정보
+     */
     @Transactional
     public VenueView createVenue(VenueCreateRequest r) {
         String name = r.name().strip();
@@ -92,7 +97,11 @@ public class ConcertAdminService {
         return new VenueView(v.getId(), v.getName(), v.getRegion().name(), v.getAddress(), v.getCapacity());
     }
 
-    /** 등록 + 회차 + 라인업 + concert.created 를 한 트랜잭션에 (11/27 sessions 가 없으면 startsAt 하나가 회차 하나) */
+    /**
+     * 등록 + 회차 + 라인업 + concert.created 를 한 트랜잭션에 (sessions 가 없으면 startsAt 하나가 회차 하나)
+     *
+     * @param r 등록할 공연과 회차 정보
+     */
     @Transactional
     public ConcertDetail create(ConcertCreateRequest r) {
         VenueEntity venue = venueRepository.findById(r.venueId()).orElseThrow(() -> invalid("공연장이 없습니다"));
@@ -121,6 +130,12 @@ public class ConcertAdminService {
         return concertService.get(c.getId());
     }
 
+    /**
+     * ConcertAdmin 정보를 수정합니다.
+     *
+     * @param id 공연 ID
+     * @param r 수정할 공연과 회차 정보
+     */
     @Transactional
     public ConcertDetail update(long id, ConcertUpdateRequest r) {
         ConcertEntity c = concertRepository.findById(id).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
@@ -144,7 +159,12 @@ public class ConcertAdminService {
         return concertService.get(id);
     }
 
-    /** 라인업 전체 교체 — 같은 목록이면 아무것도 하지 않습니다 */
+    /**
+     * 라인업 전체 교체 - 같은 목록이면 아무것도 하지 않습니다
+     *
+     * @param id 공연 ID
+     * @param artistIds 대상 아티스트 ID 목록
+     */
     @Transactional
     public ConcertDetail replaceLineup(long id, List<Long> artistIds) {
         ConcertEntity c = concertRepository.findById(id).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
@@ -162,7 +182,7 @@ public class ConcertAdminService {
         return concertService.get(id);
     }
 
-    /** 중복 없음 · SOLO 는 1명 · 전부 artist 복제에 있어야 합니다 (Catalog artist.updated 가 아직 안 온 아티스트는 400) — 요청 순서대로 */
+    /** 중복 없음, SOLO 는 1명, 전부 artist 복제에 있어야 합니다 (Catalog artist.updated 가 아직 안 온 아티스트는 400) - 요청 순서대로 */
     private List<ArtistEntity> lineup(ConcertEntity.Type type, List<Long> artistIds) {
         if (new HashSet<>(artistIds).size() != artistIds.size()) throw invalid("라인업에 같은 아티스트가 두 번 있습니다");
         if (type == ConcertEntity.Type.SOLO && artistIds.size() != 1) throw invalid("단독 공연의 라인업은 아티스트 1명입니다");
@@ -173,7 +193,7 @@ public class ConcertAdminService {
         return artistIds.stream().map(found::get).toList();
     }
 
-    /** 등록 — sessions 가 있으면 그 시각들(시작 순), 없으면 startsAt 하나 */
+    /** 등록 - sessions 가 있으면 그 시각들(시작 순), 없으면 startsAt 하나 */
     private static List<OffsetDateTime> newSessionTimes(List<SessionRequest> sessions, OffsetDateTime startsAt) {
         if (sessions == null) {
             if (startsAt == null) throw invalid("startsAt 또는 sessions 가 필요합니다");
@@ -192,7 +212,7 @@ public class ConcertAdminService {
         return times;
     }
 
-    /** 회차가 하나인 공연의 startsAt 수정 — 그 회차의 시각을 바꿉니다 (예매가 있어도 · 회원 알림은 공연 변경 공지로) */
+    /** 회차가 하나인 공연의 startsAt 수정 - 그 회차의 시각을 바꿉니다 (예매가 있어도, 회원 알림은 공연 변경 공지로) */
     private void rescheduleOnlySession(ConcertEntity c, OffsetDateTime startsAt, OffsetDateTime now) {
         List<ConcertSessionEntity> sessions = sessionRepository.findByConcertIdOrderByStartsAtAsc(c.getId());
         if (sessions.size() != 1) throw invalid("회차가 여럿인 공연은 sessions 로 바꿉니다");
@@ -201,10 +221,8 @@ public class ConcertAdminService {
     }
 
     /**
-     * 회차 목록 전체 교체 — id 있음: 시각 바꾸기 · id 없음: 새 회차(다른 회차의 좌석 · 가격을 이어받음) · 목록에 없음: 지우기.
-     * 예매 기록(상태 무관)이 있는 회차는 지우지 못합니다 (409 SESSION_HAS_BOOKINGS) — 시각은 바꿀 수 있음.
-     * 순서: 확인 → 시각 바꾸기 → 새 회차(지울 회차의 좌석에서도 가격을 복사 — 전부 바꾸는 경우에도 가격이 남게) → 지우기.
-     * 같은 시각 검사는 커밋 때 (uq_concert_session DEFERRABLE) — 지운 회차와 같은 시각의 새 회차 · 시각 맞바꾸기도 됩니다
+     * 회차 목록을 교체합니다. 기존 회차는 시각을 바꾸고 새 회차는 기존 좌석 가격을 복사합니다.
+     * 예매 이력이 있는 회차는 삭제하지 않으며 동일 시각 제약은 커밋 때 검사합니다.
      */
     private void replaceSessions(ConcertEntity c, List<SessionRequest> wanted, OffsetDateTime now) {
         List<OffsetDateTime> times = sortedDistinct(wanted);
