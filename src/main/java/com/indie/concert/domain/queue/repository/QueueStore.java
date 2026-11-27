@@ -34,6 +34,9 @@ public interface QueueStore {
     /** 대기 취소 - 대기열, 생존 신호, 입장 토큰을 지웁니다. 대기 중이었으면 그 seq */
     OptionalLong leave(long concertId, long userId);
 
+    /** 탈퇴 회원의 모든 대기열, 생존 신호와 입장 토큰을 삭제합니다. */
+    void removeUser(long userId);
+
     /** 입장 처리기 리더 - 이미 내 것이면 연장. replica 가 여럿이어도 공연당 하나만 입장시킵니다 (FR-CON-25) */
     boolean lead(long concertId, String owner);
 

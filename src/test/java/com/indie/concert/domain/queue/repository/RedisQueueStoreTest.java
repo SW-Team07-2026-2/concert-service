@@ -55,6 +55,26 @@ class RedisQueueStoreTest {
     }
 
     @Test
+    void withdrawalRemovesWaitingAdmissionAndHeartbeatAcrossConcerts() {
+        store.enter(42, 7, EXPIRE_AT);
+        store.enter(42, 8, EXPIRE_AT);
+        store.enter(43, 7, EXPIRE_AT);
+        store.admit(43, List.of("token"), 10);
+        redis.opsForValue().set("entry:99:7", "orphan-token");
+        redis.opsForValue().set("queue:alive:99:7", "1");
+
+        store.removeUser(7);
+        store.removeUser(7);
+
+        assertThat(store.rank(42, 7)).isEmpty();
+        assertThat(store.rank(42, 8)).hasValue(0);
+        assertThat(store.entry(43, 7)).isEmpty();
+        assertThat(redis.hasKey("queue:alive:42:7")).isFalse();
+        assertThat(redis.hasKey("entry:99:7")).isFalse();
+        assertThat(redis.hasKey("queue:alive:99:7")).isFalse();
+    }
+
+    @Test
     void entersInOrderAndKeepsPlaceOnReentry() {
         assertThat(store.enter(CONCERT, 1, EXPIRE_AT).rank()).isZero();
         assertThat(store.enter(CONCERT, 2, EXPIRE_AT).rank()).isEqualTo(1);

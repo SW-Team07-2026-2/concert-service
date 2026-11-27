@@ -61,6 +61,11 @@ public interface QueueEntryJpaRepository extends JpaRepository<QueueEntryEntity,
             """)
     int markLeft(@Param("concertId") long concertId, @Param("userId") long userId);
 
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM QueueEntryEntity e WHERE e.userId = :userId")
+    int deleteForUser(@Param("userId") long userId);
+
     List<QueueEntryRepository.ActiveEntry> findByConcertIdAndStatusAndAdmittedAtAfterAndEntryTokenIsNotNull(
             long concertId, QueueEntryEntity.Status status, OffsetDateTime since);
 
