@@ -10,9 +10,8 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 /**
- * Member user.withdrawn → 탈퇴 회원의 예매 정리 (11/27 TOS v3 — 선점 반환 · 회차 24시간 전보다 앞이면 환불 · 그 뒤면 환불 없이 만료).
- * 멱등 — 정리 표시(withdrawn_at)가 된 예매만 다룹니다. 표시를 먼저 커밋하므로 Payment 불통이어도 예외를 내지 않고,
- * 남은 건은 BookingExpiryJob 이 30초마다 이어서 합니다. 표시(DB)가 실패할 때만 예외 → KafkaConfig 의 재시도 → DLT.
+ * Member -> Kafka user.withdrawn -> Concert 탈퇴 회원 예매 정리.
+ * 정리 표시를 먼저 저장하고 남은 환불이나 만료 처리는 배치가 재시도합니다.
  */
 @Component
 public class UserEventConsumer {
@@ -25,6 +24,12 @@ public class UserEventConsumer {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 회원 탈퇴 이벤트를 받아 예매 환불 또는 만료를 처리합니다.
+     *
+     * @param record Kafka에서 수신한 이벤트 레코드
+     * @param ack 처리 완료 후 오프셋을 커밋할 승인 객체
+     */
     @KafkaListener(topics = "user.withdrawn")
     public void onUserWithdrawn(ConsumerRecord<String, String> record, Acknowledgment ack) throws JsonProcessingException {
         EventEnvelope e = EventEnvelope.parse(objectMapper, record.value());

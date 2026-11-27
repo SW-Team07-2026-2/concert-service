@@ -37,14 +37,8 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 대기열 (N4 ~ N6 · i1 · i2 · 16_대기열_Redis_운영). 원칙 — "Redis 를 안 죽게"보다 "죽어도 복구되게".
- * <pre>
- * 진입 · 조회   Redis 만             응답 경로에 DB 없음 — ✏️ 11/25 공연 판매 값 · 남은 좌석 수는 Pod 메모리 3초 (몰릴 때 DB 는 3초에 1번)
- * 입장 처리     1초 · 리더 하나        ZPOPMIN N → 입장 토큰 7분 → DB 즉시 반영
- * 스냅샷        5초 · 증분 배치        Redis → queue_entry
- * 복구          센티넬이 없으면        queue_entry → ZADD (순서 그대로) + 입장 토큰 (남은 시간만큼) · 다른 replica 가 복구 중이면 DB COUNT 로 degraded
- * </pre>
- * 입장 토큰 검사(requireEntry · entryLeft)도 여기 있습니다 — 좌석 선점과 좌석 화면 타이머가 부릅니다. 결제(N16)는 선점만 봅니다 (Gateway 는 관여하지 않음).
+ * Redis 대기열의 진입, 조회와 입장 토큰을 관리합니다.
+ * 입장 결과와 순번을 DB에 기록하고 Redis 데이터가 없으면 복구하거나 제한된 결과를 제공합니다.
  */
 @Service
 public class QueueService {
@@ -62,14 +56,14 @@ public class QueueService {
     private final String instanceId = UUID.randomUUID().toString();
 
     /**
-     * ✏️ 11/25 k6 3,000명 — 2초 폴링마다 공연을 DB 에서 읽어 초당 약 1,500번 · DB 풀 대기 155번.
-     * 판매 값 · 남은 좌석 수는 Pod 메모리에 3초 둡니다 (캐시가 비면 한 요청만 DB 로 · 나머지는 그 결과를 기다림). 판매 상태는 요청 시각으로 다시 계산
+     * k6 3,000명 - 2초 폴링마다 공연을 DB 에서 읽어 초당 약 1,500번, DB 풀 대기 155번.
+     * 판매 값, 남은 좌석 수는 Pod 메모리에 3초 둡니다 (캐시가 비면 한 요청만 DB 로, 나머지는 그 결과를 기다림). 판매 상태는 요청 시각으로 다시 계산
      */
     private static final Duration SNAPSHOT_TTL = Duration.ofSeconds(3);
     private final Cache<Long, Sale> sales = Caffeine.newBuilder().expireAfterWrite(SNAPSHOT_TTL).maximumSize(1_000).build();
     private final Cache<Long, Seats> seats = Caffeine.newBuilder().expireAfterWrite(SNAPSHOT_TTL).maximumSize(1_000).build();
 
-    /** 공연에서 대기열이 쓰는 값만 — JPA 엔티티를 스레드 사이에 공유하지 않게. 11/27 대기열은 공연에 하나 · 마지막 회차 시작까지 */
+    /** 공연에서 대기열이 쓰는 값만 - JPA 엔티티를 스레드 사이에 공유하지 않게. 대기열은 공연에 하나, 마지막 회차 시작까지 */
     private record Sale(boolean queueEnabled, OffsetDateTime lastStartsAt, OffsetDateTime bookingOpenAt) {
         static Sale of(ConcertEntity c) {
             return new Sale(c.isQueueEnabled(), c.getLastStartsAt(), c.getBookingOpenAt());
@@ -80,7 +74,7 @@ public class QueueService {
         }
     }
 
-    /** 좌석을 아직 안 올린 공연(total 0)은 매진 · 입장 멈춤으로 보지 않습니다 — 예전처럼 들어갑니다 */
+    /** 좌석을 아직 안 올린 공연(total 0)은 매진, 입장 멈춤으로 보지 않습니다 - 예전처럼 들어갑니다 */
     private record Seats(long total, long unsold, long available) {
         boolean soldOut() { return total > 0 && unsold == 0; }
         boolean noneToPick() { return total > 0 && available == 0; }
@@ -98,7 +92,12 @@ public class QueueService {
         this.clock = clock;
     }
 
-    /** N4 — 진입. 이미 대기 중이면 409 + 지금 순번 (순번은 그대로 유지) · ✏️ 11/25 매진이면 410 SOLD_OUT (줄을 세우지 않음) */
+    /**
+     * N4 - 진입. 이미 대기 중이면 409 + 지금 순번 (순번은 그대로 유지), 매진이면 410 SOLD_OUT (줄을 세우지 않음)
+     *
+     * @param concertId 공연 ID
+     * @param userId 조회하거나 처리할 회원 ID
+     */
     public QueueStatus enter(long concertId, long userId) {
         Sale sale = queueSale(concertId);
         switch (sale.status(now())) {
@@ -125,8 +124,11 @@ public class QueueService {
     }
 
     /**
-     * N5 — 순번 조회 (pollAfterMs 간격 · ✏️ 11/25 순번이 멀수록 2 → 15초) + 생존 신호. 🔴 복구 중에도 503 을 내지 않습니다 — DB 로 순번을 계산해 degraded 로 내려줍니다.
-     * 프론트는 degraded 면 pollAfterMs 대로 다시 부르기만 하면 됩니다 (15 §4). ✏️ 11/25 기다리는 중에 매진되면 SOLD_OUT — 조회를 멈춥니다
+     * N5 - 순번 조회 (pollAfterMs 간격, 순번이 멀수록 2 -> 15초) + 생존 신호. 복구 중에도 503 을 내지 않습니다 - DB 로 순번을 계산해 degraded 로 내려줍니다.
+     * 프론트는 degraded 면 pollAfterMs 대로 다시 부르기만 하면 됩니다 (15 §4). 기다리는 중에 매진되면 SOLD_OUT - 조회를 멈춥니다
+     *
+     * @param concertId 공연 ID
+     * @param userId 조회하거나 처리할 회원 ID
      */
     public QueueStatus status(long concertId, long userId) {
         Sale sale = queueSale(concertId);
@@ -146,11 +148,16 @@ public class QueueService {
             log.warn("queue_status_degraded concertId={} error={}", concertId, e.getMessage());
             return degraded(concertId, userId);
         }
-        // 대기열에도 입장 토큰에도 없음 — 기록이 있으면 이탈 · 토큰 만료 (다시 진입하면 맨 뒤)
+        // 대기열에도 입장 토큰에도 없음 - 기록이 있으면 이탈, 토큰 만료 (다시 진입하면 맨 뒤)
         return entries.findPosition(concertId, userId).map(p -> expired()).orElseThrow(QueueService::notInQueue);
     }
 
-    /** N6 — 대기 취소 (입장 토큰도 반납). 이탈은 빈도가 낮아 배치 없이 바로 DB 에 남깁니다 */
+    /**
+     * N6 - 대기 취소 (입장 토큰도 반납). 이탈은 빈도가 낮아 배치 없이 바로 DB 에 남깁니다
+     *
+     * @param concertId 공연 ID
+     * @param userId 조회하거나 처리할 회원 ID
+     */
     public void leave(long concertId, long userId) {
         concertRepository.findById(concertId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
         OptionalLong seq;
@@ -164,9 +171,13 @@ public class QueueService {
     }
 
     /**
-     * 좌석 선점(N10) 앞단 (FR-CON-21) — 대기열을 켠 공연은 입장 토큰이 맞아야 합니다.
-     * 끈 공연은 같은 판매 시각만 검사합니다 (FR-CON-28). 🔴 Redis 를 못 읽으면 통과시키지 않습니다 — 대기열 우회가 됩니다.
-     * @return 입장 토큰 남은 초 — 선점 마감이 이어받습니다 (입장부터 결제하기까지 시계 하나). 대기열을 끈 공연은 토큰이 없어 empty
+     * 좌석 선점(N10) 앞단 (FR-CON-21) - 대기열을 켠 공연은 입장 토큰이 맞아야 합니다.
+     * 끈 공연은 같은 판매 시각만 검사합니다 (FR-CON-28). Redis 를 못 읽으면 통과시키지 않습니다 - 대기열 우회가 됩니다.
+     * @return 입장 토큰 남은 초 - 선점 마감이 이어받습니다 (입장부터 결제하기까지 시계 하나). 대기열을 끈 공연은 토큰이 없어 empty
+     *
+     * @param concert 대기열 설정을 적용할 공연
+     * @param userId 조회하거나 처리할 회원 ID
+     * @param entryToken 대기열 통과 후 발급된 입장 토큰
      */
     public OptionalLong requireEntry(ConcertEntity concert, long userId, String entryToken) {
         ConcertEntity.SaleStatus sale = concert.saleStatus(now());
@@ -182,8 +193,12 @@ public class QueueService {
     }
 
     /**
-     * 입장 토큰 남은 초 (Redis TTL) — 좌석 화면 타이머 · 좌석 선점이 씁니다. DB 를 거치지 않습니다.
-     * 입장 기록이 없거나 만료면 QUEUE_NOT_ADMITTED · 토큰이 다르면 ENTRY_TOKEN_INVALID
+     * 입장 토큰 남은 초 (Redis TTL) - 좌석 화면 타이머, 좌석 선점이 씁니다. DB 를 거치지 않습니다.
+     * 입장 기록이 없거나 만료면 QUEUE_NOT_ADMITTED, 토큰이 다르면 ENTRY_TOKEN_INVALID
+     *
+     * @param concertId 공연 ID
+     * @param userId 조회하거나 처리할 회원 ID
+     * @param entryToken 대기열 통과 후 발급된 입장 토큰
      */
     public long entryLeft(long concertId, long userId, String entryToken) {
         Optional<QueueStore.Entry> entry;
@@ -201,9 +216,11 @@ public class QueueService {
     }
 
     /**
-     * 입장 처리 (1초) — 리더만. 센티넬이 없으면 여기서도 복구합니다 (아무도 폴링하지 않아도 복구되게).
-     * ✏️ 11/25 지금 고를 좌석이 없으면(전부 선점 · 결제 중 · 판매) 입장을 멈춥니다 — 들여보내도 빈 좌석 화면에서 7분 시계만 흐릅니다.
+     * 입장 처리 (1초) - 리더만. 센티넬이 없으면 여기서도 복구합니다 (아무도 폴링하지 않아도 복구되게).
+     * 지금 고를 좌석이 없으면(전부 선점, 결제 중, 판매) 입장을 멈춥니다 - 들여보내도 빈 좌석 화면에서 7분 시계만 흐릅니다.
      * 선점이 풀리면 줄 순서대로 다시 들어갑니다
+     *
+     * @param concert 대기열 설정을 적용할 공연
      */
     public void admit(ConcertEntity concert) {
         long concertId = concert.getId();
@@ -225,7 +242,11 @@ public class QueueService {
         }
     }
 
-    /** 스냅샷 (5초 · 증분) — 마지막으로 반영한 seq 이후만 배치 upsert */
+    /**
+     * 스냅샷 (5초, 증분) - 마지막으로 반영한 seq 이후만 배치 upsert
+     *
+     * @param concert 대기열 설정을 적용할 공연
+     */
     public void snapshot(ConcertEntity concert) {
         long concertId = concert.getId();
         try {
@@ -244,7 +265,11 @@ public class QueueService {
         }
     }
 
-    /** i1 — 수동 재구성. 센티넬이 있어도 DB 의 대기자를 다시 채웁니다 (이미 있는 순번은 그대로) */
+    /**
+     * i1 - 수동 재구성. 센티넬이 있어도 DB 의 대기자를 다시 채웁니다 (이미 있는 순번은 그대로)
+     *
+     * @param concertId 공연 ID
+     */
     public QueueRebuilt rebuildManually(long concertId) {
         ConcertEntity concert = concertRepository.findById(concertId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
         long started = System.nanoTime();
@@ -257,7 +282,11 @@ public class QueueService {
         return new QueueRebuilt(rebuilt, (System.nanoTime() - started) / 1_000_000);
     }
 
-    /** i2 — ZCARD · 마지막 스냅샷 seq · 센티넬 상태 */
+    /**
+     * i2 - ZCARD, 마지막 스냅샷 seq, 센티넬 상태
+     *
+     * @param concertId 공연 ID
+     */
     public QueueMetrics metrics(long concertId) {
         concertRepository.findById(concertId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
         try {
@@ -268,15 +297,15 @@ public class QueueService {
         }
     }
 
-    /** 입장 처리 · 스냅샷 대상 — 대기열을 켠 판매 중 공연 */
+    /** 입장 처리, 스냅샷 대상 - 대기열을 켠 판매 중 공연 */
     public List<ConcertEntity> activeConcerts() {
         return concertRepository.findQueueActive(now());
     }
 
     /**
-     * DB → Redis (16 §2). true = 이제 준비됨 · false = 다른 replica 가 재구성 중.
-     * seq 도 DB 의 최댓값 이상으로 되돌립니다 — 안 하면 복구 직후 진입자가 기존 대기자보다 앞 번호를 받습니다.
-     * 입장 토큰도 되살립니다 (10/24) — 안 하면 좌석을 고르던 사람(최대 초당 입장 수 × 7분)이 전부 다시 줄을 섭니다.
+     * DB -> Redis (16 §2). true = 이제 준비됨, false = 다른 replica 가 재구성 중.
+     * seq 도 DB 의 최댓값 이상으로 되돌립니다 - 안 하면 복구 직후 진입자가 기존 대기자보다 앞 번호를 받습니다.
+     * 입장 토큰도 되살립니다 - 안 하면 좌석을 고르던 사람(최대 초당 입장 수 * 7분)이 전부 다시 줄을 섭니다.
      */
     private boolean rebuild(long concertId, OffsetDateTime startsAt, boolean force) {
         String lock = store.lockRebuild(concertId);
@@ -303,7 +332,7 @@ public class QueueService {
         }
     }
 
-    /** 입장 토큰 — 남은 시간만큼만. 건수는 초당 입장 수 × 7분으로 묶여 있어(기본 8,400) 한 번에 읽습니다 */
+    /** 입장 토큰 - 남은 시간만큼만. 건수는 초당 입장 수 * 7분으로 묶여 있어(기본 8,400) 한 번에 읽습니다 */
     private int restoreEntryTokens(long concertId) {
         Duration ttl = Duration.ofMinutes(props.entryTtlMinutes());
         Instant now = clock.instant();
@@ -326,7 +355,7 @@ public class QueueService {
                 yield new QueueStatus("WAITING", rank, entries.countWaiting(concertId), eta(rank),
                         props.degradedPollAfterMs(), true, null, null);
             }
-            // 토큰은 Redis 에서 내줍니다 — 복구되면(DB 에서 되살림) 다음 폴링에서 같은 토큰이 나갑니다
+            // 토큰은 Redis 에서 내줍니다 - 복구되면(DB 에서 되살림) 다음 폴링에서 같은 토큰이 나갑니다
             case ADMITTED -> new QueueStatus("ADMITTED", 0L, null, null, props.degradedPollAfterMs(), true, null, null);
             case LEFT -> expired();
         };
@@ -348,14 +377,14 @@ public class QueueService {
         });
     }
 
-    /** 고를 좌석이 없어 입장이 멈춘 동안은 가장 긴 간격으로 — 순번이 움직이지 않습니다 */
+    /** 고를 좌석이 없어 입장이 멈춘 동안은 가장 긴 간격으로 - 순번이 움직이지 않습니다 */
     private QueueStatus waiting(long concertId, long rank, long total) {
         long eta = eta(rank);
         long poll = seats(concertId).noneToPick() ? props.pollMaxMs() : pollAfter(eta);
         return new QueueStatus("WAITING", rank, total, eta, poll, null, null, null);
     }
 
-    /** ✏️ 11/25 순번이 멀수록 천천히 — 예상 대기의 1/3 (입장 전에 3번은 다시 묻게) · poll-after-ms ~ poll-max-ms */
+    /** 순번이 멀수록 천천히 - 예상 대기의 1/3 (입장 전에 3번은 다시 묻게), poll-after-ms ~ poll-max-ms */
     private long pollAfter(long etaSeconds) {
         return Math.max(props.pollAfterMs(), Math.min(props.pollMaxMs(), etaSeconds * 1000 / 3));
     }
@@ -366,13 +395,13 @@ public class QueueService {
         return new QueueStatus("EXPIRED", null, null, null, null, null, null, null);
     }
 
-    /** 1초에 admitBatch 명씩 입장 — 이탈자가 빠지면 실제로는 더 빠릅니다 */
+    /** 1초에 admitBatch 명씩 입장 - 이탈자가 빠지면 실제로는 더 빠릅니다 */
     private long eta(long rank) {
         return (long) Math.ceil(rank * (double) props.admitIntervalMs() / (props.admitBatch() * 1000.0));
     }
 
     private static Instant expireAt(OffsetDateTime lastStartsAt) {
-        return lastStartsAt.plusDays(1).toInstant();   // 16 §4 — 공연 종료 + 1일 (11/27 마지막 회차 시작 + 1일)
+        return lastStartsAt.plusDays(1).toInstant();   // 16 §4 - 공연 종료 + 1일 (마지막 회차 시작 + 1일)
     }
 
     private OffsetDateTime now() {

@@ -15,9 +15,9 @@ import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
- * concert — 관리자(Studio)가 검수한 뒤에만 등록됩니다 (수집기 직접 적재 없음). 라인업은 concert_artist.
- * genre — 단독 공연(SOLO)은 그 아티스트 장르를 따르고(artist.updated 로 함께 갱신), 페스티벌은 관리자가 정합니다.
- * source · external_id — 수집 데이터로 등록할 때만 (같은 수집 공연 두 번 등록 방지 · uq_concert_source 는 부분 인덱스라 Flyway 에만).
+ * concert - 관리자(Studio)가 검수한 뒤에만 등록됩니다 (수집기 직접 적재 없음). 라인업은 concert_artist.
+ * genre - 단독 공연(SOLO)은 그 아티스트 장르를 따르고(artist.updated 로 함께 갱신), 페스티벌은 관리자가 정합니다.
+ * source, external_id - 수집 데이터로 등록할 때만 (같은 수집 공연 두 번 등록 방지, uq_concert_source 는 부분 인덱스라 Flyway 에만).
  */
 @Entity
 @Table(name = "concert")
@@ -25,7 +25,7 @@ public class ConcertEntity {
 
     public enum Type { SOLO, FESTIVAL }
 
-    /** 판매 상태 — 저장하지 않고 시각으로 계산합니다 (상태 전이 배치 없이) */
+    /** 판매 상태 - 저장하지 않고 시각으로 계산합니다 (상태 전이 배치 없이) */
     public enum SaleStatus { SCHEDULED, ON_SALE, CLOSED }
 
     @Id
@@ -41,16 +41,16 @@ public class ConcertEntity {
 
     private String genre;
 
-    /** 첫 회차 시작 — 목록 정렬 · 알림 (회차를 바꾸면 ConcertAdminService 가 맞춤) */
+    /** 첫 회차 시작 - 목록 정렬, 알림 (회차를 바꾸면 ConcertAdminService 가 맞춤) */
     private OffsetDateTime startsAt;
 
-    /** 11/27 마지막 회차 시작 — 판매 · 대기열은 이 시각까지 (회차가 하나면 startsAt 과 같음) */
+    /** 마지막 회차 시작 - 판매, 대기열은 이 시각까지 (회차가 하나면 startsAt 과 같음) */
     private OffsetDateTime lastStartsAt;
 
-    /** 공연 기간 끝 — 표시용 · 모르면 null (입장 QR 시간은 회차 시작으로만 정합니다) */
+    /** 공연 기간 끝 - 표시용, 모르면 null (입장 QR 시간은 회차 시작으로만 정합니다) */
     private OffsetDateTime endsAt;
 
-    /** 목록에 보여 줄 대표 가격 — 결제 금액은 concert_seat.price */
+    /** 목록에 보여 줄 대표 가격 - 결제 금액은 concert_seat.price */
     private Integer price;
 
     private OffsetDateTime bookingOpenAt;
@@ -58,14 +58,14 @@ public class ConcertEntity {
     @Column(nullable = false)
     private Boolean queueEnabled = true;
 
-    /** 1인 N매 — 예매 하나에 담을 수 있는 좌석 수 */
+    /** 1인 N매 - 예매 하나에 담을 수 있는 좌석 수 */
     private Integer maxSeatsPerUser;
 
     private String source;
 
     private String externalId;
 
-    /** 상세 · 예매 약관 · 관람 요구사항 (마크다운) — 없으면 null */
+    /** 상세, 예매 약관, 관람 요구사항 (마크다운) - 없으면 null */
     private String description;
 
     private String terms;
@@ -74,7 +74,7 @@ public class ConcertEntity {
 
     private String posterUrl;
 
-    /** 상세 이미지 — 보여 줄 순서대로 */
+    /** 상세 이미지 - 보여 줄 순서대로 */
     @JdbcTypeCode(SqlTypes.ARRAY)
     private List<String> imageUrls = List.of();
 
@@ -101,7 +101,7 @@ public class ConcertEntity {
         this.updatedAt = now;
     }
 
-    /** 관리자 수정 — null 인 값은 그대로 둡니다. 종류(SOLO · FESTIVAL)와 수집 출처는 바꾸지 않습니다. 회차 시각은 schedule 로 */
+    /** 관리자 수정 - null 인 값은 그대로 둡니다. 종류(SOLO, FESTIVAL)와 수집 출처는 바꾸지 않습니다. 회차 시각은 schedule 로 */
     public void update(Long venueId, String title, OffsetDateTime endsAt, Integer price,
                        OffsetDateTime bookingOpenAt, Boolean queueEnabled, Integer maxSeatsPerUser, OffsetDateTime now) {
         if (venueId != null) this.venueId = venueId;
@@ -114,7 +114,7 @@ public class ConcertEntity {
         this.updatedAt = now;
     }
 
-    /** 상세 · 약관 · 요구사항 · 이미지 — null 인 값은 그대로 둡니다 (imageUrls 는 보내면 목록 전체 교체) */
+    /** 상세, 약관, 요구사항, 이미지 - null 인 값은 그대로 둡니다 (imageUrls 는 보내면 목록 전체 교체) */
     public void describe(String description, String terms, String requirements, String posterUrl, List<String> imageUrls,
                          OffsetDateTime now) {
         if (description != null) this.description = description;
@@ -125,27 +125,27 @@ public class ConcertEntity {
         this.updatedAt = now;
     }
 
-    /** 단독 공연은 아티스트 장르 · 페스티벌은 관리자 값 — 어느 쪽인지는 서비스가 정합니다 */
+    /** 단독 공연은 아티스트 장르, 페스티벌은 관리자 값 - 어느 쪽인지는 서비스가 정합니다 */
     public void changeGenre(String genre, OffsetDateTime now) {
         this.genre = genre;
         this.updatedAt = now;
     }
 
-    /** 11/27 회차 — 첫 · 마지막 회차 시작을 옮겨 둡니다 (ConcertAdminService 가 회차를 바꿀 때만) */
+    /** 회차 - 첫, 마지막 회차 시작을 옮겨 둡니다 (ConcertAdminService 가 회차를 바꿀 때만) */
     public void schedule(OffsetDateTime firstStartsAt, OffsetDateTime lastStartsAt, OffsetDateTime now) {
         this.startsAt = firstStartsAt;
         this.lastStartsAt = lastStartsAt;
         this.updatedAt = now;
     }
 
-    /** 마지막 회차 시작 이후 CLOSED · 오픈 시각 전(또는 미정) SCHEDULED · 그 사이 ON_SALE (회차 하나하나의 마감은 회차 시작) */
+    /** 마지막 회차 시작 이후 CLOSED, 오픈 시각 전(또는 미정) SCHEDULED, 그 사이 ON_SALE (회차 하나하나의 마감은 회차 시작) */
     public SaleStatus saleStatus(OffsetDateTime now) {
         return saleStatus(lastStartsAt, bookingOpenAt, now);
     }
 
     /**
-     * ✏️ 11/25 캐시에 둔 공연 값으로도 같은 규칙 — 캐시가 몇 초 묵어도 판매 상태는 요청 시각으로 계산합니다.
-     * closesAt = 판매가 끝나는 시각 — 공연이면 마지막 회차 시작 · 회차 하나면 그 회차 시작 (11/27)
+     * 캐시에 둔 공연 값으로도 같은 규칙 - 캐시가 몇 초 묵어도 판매 상태는 요청 시각으로 계산합니다.
+     * closesAt = 판매가 끝나는 시각 - 공연이면 마지막 회차 시작, 회차 하나면 그 회차 시작
      */
     public static SaleStatus saleStatus(OffsetDateTime closesAt, OffsetDateTime bookingOpenAt, OffsetDateTime now) {
         if (!now.isBefore(closesAt)) return SaleStatus.CLOSED;

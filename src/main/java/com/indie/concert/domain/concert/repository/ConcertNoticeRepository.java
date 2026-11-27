@@ -5,7 +5,7 @@ import com.indie.concert.domain.concert.entity.ConcertNoticeEntity;
 import java.util.List;
 import java.util.Optional;
 
-/** 공연 변경 공지 저장소 포트 — 구현은 ConcertNoticeJpaRepository */
+/** 공연 변경 공지 저장소 포트 - 구현은 ConcertNoticeJpaRepository */
 public interface ConcertNoticeRepository {
 
     Optional<ConcertNoticeEntity> findByIdAndConcertId(Long id, Long concertId);

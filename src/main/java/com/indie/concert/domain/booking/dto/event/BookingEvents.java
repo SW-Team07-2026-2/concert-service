@@ -12,13 +12,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 예매 이벤트 — Member 는 본인 알림(userId)으로만 적재하고, AI 는 선호 신호로 씁니다.
- * <pre>
- * booking.completed  결제 승인으로 예매가 확정된 커밋에서
- * booking.cancelled  확정 예매를 취소(환불)한 커밋에서만 — 결제 전 선택 취소 · 시간 만료 · 탈퇴 만료(환불 없음)는 내지 않습니다 (탈퇴 환불은 냄)
- * </pre>
- * artistIds 는 라인업 순서 (첫 번째 = 헤드라이너) · artistId 는 헤드라이너 (artistIds 이전 구독자용).
- * 11/27 startsAt 은 예매한 회차의 시작 (공연 첫 회차가 아님) · sessionId 추가 — 필드 이름은 그대로라 Member 알림 문구는 바꿀 것이 없습니다.
+ * Concert 예매 확정과 환불 -> Outbox -> Kafka -> Member 알림과 AI 선호 신호.
+ * 단순 선점 취소나 환불 없는 만료는 발행하지 않습니다. 시작 시각은 예매한 회차 기준입니다.
  */
 @Component
 public class BookingEvents {

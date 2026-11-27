@@ -51,7 +51,7 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
     @Query("select c from ConcertEntity c where c.queueEnabled = true and c.bookingOpenAt <= :now and c.lastStartsAt > :now")
     List<ConcertEntity> findQueueActive(@Param("now") OffsetDateTime now);
 
-    /** idx_concert_artist_artist 로 그 아티스트 공연만 · genre 는 null 일 수 있어 타입을 적어 둡니다 */
+    /** idx_concert_artist_artist 로 그 아티스트 공연만, genre 는 null 일 수 있어 타입을 적어 둡니다 */
     @Override
     @Modifying
     @Query(value = """
@@ -65,7 +65,7 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
     @Query(value = "SELECT EXISTS (SELECT 1 FROM concert_seat WHERE concert_id = :concertId)", nativeQuery = true)
     boolean hasSeats(@Param("concertId") long concertId);
 
-    /** 11/27 from 이후 회차가 남은 공연 — 여러 날 공연은 첫 회차가 지나도 남은 회차가 있으면 나옵니다 */
+    /** from 이후 회차가 남은 공연 - 여러 날 공연은 첫 회차가 지나도 남은 회차가 있으면 나옵니다 */
     private static Specification<ConcertEntity> startsFrom(OffsetDateTime from) {
         if (from == null) return null;
         return (root, query, cb) -> cb.greaterThanOrEqualTo(root.get("lastStartsAt"), from);
@@ -86,7 +86,7 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
         };
     }
 
-    /** 라인업에 한 명이라도 있는 공연 (concert_artist · idx_concert_artist_artist) */
+    /** 라인업에 한 명이라도 있는 공연 (concert_artist, idx_concert_artist_artist) */
     private static Specification<ConcertEntity> withArtists(Collection<Long> artistIds) {
         if (artistIds == null || artistIds.isEmpty()) return null;
         return (root, query, cb) -> {
@@ -103,8 +103,8 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
     }
 
     /**
-     * 11/19 장르 — 공연 장르이거나 라인업 아티스트 중 누군가의 대표 장르 (프론트 보완 기준 4장).
-     * 아티스트 복제본은 대표 장르(Catalog 장르 목록의 첫 번째)만 가지므로 두 번째 장르로는 걸리지 않습니다 (사용자 결정 · 스키마 그대로)
+     * 장르 - 공연 장르이거나 라인업 아티스트 중 누군가의 대표 장르 (프론트 보완 기준 4장).
+     * 아티스트 복제본은 대표 장르(Catalog 장르 목록의 첫 번째)만 가지므로 두 번째 장르로는 걸리지 않습니다 (사용자 결정, 스키마 그대로)
      */
     private static Specification<ConcertEntity> genreIn(Collection<String> genres) {
         if (genres == null || genres.isEmpty()) return null;
@@ -119,7 +119,7 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
         };
     }
 
-    /** 검색어 LIKE (대소문자 무시 · 검색어의 % _ 는 글자 그대로) — 공연 제목 · 라인업 아티스트 이름 · 11/19 공연장 이름 (프론트 요구 2-2) */
+    /** 검색어 LIKE (대소문자 무시, 검색어의 % _ 는 글자 그대로) - 공연 제목, 라인업 아티스트 이름, 공연장 이름 (프론트 요구 2-2) */
     private static Specification<ConcertEntity> titleArtistOrVenue(String q) {
         if (q == null || q.isBlank()) return null;
         String pattern = "%" + q.strip().toLowerCase().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
@@ -137,7 +137,7 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
         };
     }
 
-    /** 진행 현황 — ConcertEntity.saleStatus(now) 와 같은 기준 (마지막 회차 시작 이후 CLOSED · 오픈 전이나 미정 SCHEDULED · 그 사이 ON_SALE) */
+    /** 진행 현황 - ConcertEntity.saleStatus(now) 와 같은 기준 (마지막 회차 시작 이후 CLOSED, 오픈 전이나 미정 SCHEDULED, 그 사이 ON_SALE) */
     private static Specification<ConcertEntity> saleStatusIn(Collection<ConcertEntity.SaleStatus> statuses, OffsetDateTime now) {
         if (statuses == null || statuses.isEmpty()) return null;
         return (root, query, cb) -> {
@@ -152,7 +152,7 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
     }
 
     /**
-     * 넘긴 아티스트 순서대로 — 공연마다 라인업 중 가장 앞 순서의 자리. 같으면 공연일 가까운 순.
+     * 넘긴 아티스트 순서대로 - 공연마다 라인업 중 가장 앞 순서의 자리. 같으면 공연일 가까운 순.
      * 정렬은 데이터 조회에만 겁니다 (페이지의 개수 조회는 결과 타입이 Long). pageable 은 정렬 없이 넘어와야 합니다
      */
     private static Specification<ConcertEntity> byArtistOrder(List<Long> artistIds) {

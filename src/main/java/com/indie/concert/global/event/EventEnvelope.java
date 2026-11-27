@@ -10,7 +10,7 @@ import java.util.UUID;
 /**
  * 이벤트 봉투 { eventId, type, version, occurredAt, payload } (08_기능상세 §0.7).
  * 모르는 필드는 무시합니다. payload 래퍼가 없는 평평한 형식(payment.completed 예시)도 받아 줍니다.
- * 필수 값이 없으면 IllegalArgumentException → 재시도 없이 DLT.
+ * 필수 값이 없으면 IllegalArgumentException -> 재시도 없이 DLT.
  */
 public record EventEnvelope(UUID eventId, OffsetDateTime occurredAt, JsonNode payload) {
 

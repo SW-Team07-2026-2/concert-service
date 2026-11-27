@@ -14,11 +14,8 @@ import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
- * 공연 수정 — 보낸 값만 바꿉니다 (null 은 그대로). 종류 · 수집 출처는 바꿀 수 없고, 라인업은 PUT .../lineup 으로.
- * imageUrls 는 보내면 목록 전체를 바꿉니다 (빈 목록 = 모두 지움).
- * genre — FESTIVAL 만. venueId — 공연 좌석을 만들기 전에만 (만든 뒤면 409).
- * 11/27 sessions — 보내면 회차 목록 전체를 바꿉니다 (SessionRequest). 새 회차는 이미 정한 좌석 가격을 그대로 이어받습니다.
- * startsAt — 회차가 하나인 공연만 (그 회차의 시각을 바꿈) · 회차가 여럿이면 sessions 로 (400). 둘 다 보내면 400.
+ * 공연 수정 요청. null 필드는 유지하며 종류와 수집 출처는 변경하지 않습니다.
+ * 회차 목록과 이미지 목록은 전달하면 전체 교체합니다. startsAt 단독 변경은 회차가 하나일 때만 허용합니다.
  */
 public record ConcertUpdateRequest(@Positive Long venueId,
                                    @Size(min = 1, max = 200) String title,

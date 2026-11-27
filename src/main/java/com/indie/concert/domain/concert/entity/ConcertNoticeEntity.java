@@ -10,12 +10,12 @@ import jakarta.persistence.Table;
 
 import java.time.OffsetDateTime;
 
-/** concert_notice — 공연 변경 공지 (11/18). 관리자(Studio)가 쓰고 공연 상세 화면에 최신순으로 보입니다 */
+/** concert_notice - 공연 변경 공지 . 관리자(Studio)가 쓰고 공연 상세 화면에 최신순으로 보입니다 */
 @Entity
 @Table(name = "concert_notice")
 public class ConcertNoticeEntity {
 
-    /** 일정(연기 포함) · 장소 · 출연진 · 예매 일정 · 취소 · 기타 — 값을 바꾸면 V2 ck_concert_notice_kind 도 */
+    /** 일정(연기 포함), 장소, 출연진, 예매 일정, 취소, 기타 - 값을 바꾸면 V2 ck_concert_notice_kind 도 */
     public enum Kind { SCHEDULE, VENUE, LINEUP, BOOKING, CANCEL, ETC }
 
     @Id

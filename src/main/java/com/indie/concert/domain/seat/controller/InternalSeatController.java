@@ -11,10 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * 내부 — 관리자 공연 좌석 가격. 공연장 배치(무대 그리기로 저장한 좌석) 중 이 공연에서 팔 좌석과 좌석별 가격을 받습니다.
- * X-Internal-Token(iss=studio) 필수 · camelCase. 다시 보내면 가격을 바꿉니다 (선점 · 판매된 좌석 제외).
- */
+/** Studio 공연 관리자 -> Concert 내부 API로 회차별 판매 좌석과 가격을 설정합니다. 선점 또는 판매 좌석은 유지합니다. */
 @RestController
 public class InternalSeatController {
 
@@ -24,6 +21,12 @@ public class InternalSeatController {
         this.seatService = seatService;
     }
 
+    /**
+     * 판매 좌석과 좌석별 가격을 설정합니다.
+     *
+     * @param concertId 공연 ID
+     * @param request 판매 좌석과 가격 목록
+     */
     @PostMapping("/internal/admin/concerts/{concertId}/seats")
     public ApiResponse<SeatPriced> price(@PathVariable @Positive long concertId, @Valid @RequestBody SeatPriceRequest request) {
         return ApiResponse.onSuccess(seatService.price(concertId, request.seats()));

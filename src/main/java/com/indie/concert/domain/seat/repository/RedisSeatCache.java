@@ -12,14 +12,14 @@ import java.time.Duration;
 import java.util.Optional;
 
 /**
- * 캐시용 Redis(allkeys-lru)는 죽을 수 있습니다 — 모든 실패는 로그만 남기고 넘어갑니다 (fail-open).
- * 값 JSON 은 seatCacheRedis 템플릿의 직렬화기가 맡습니다 (62B) — 깨진 값도 읽기 실패로 보고 DB 로 갑니다.
+ * 캐시용 Redis(allkeys-lru)는 죽을 수 있습니다 - 모든 실패는 로그만 남기고 넘어갑니다 (fail-open).
+ * 값 JSON 은 seatCacheRedis 템플릿의 직렬화기가 맡습니다 (62B) - 깨진 값도 읽기 실패로 보고 DB 로 갑니다.
  */
 @Component
 public class RedisSeatCache implements SeatCache {
 
     private static final Logger log = LoggerFactory.getLogger(RedisSeatCache.class);
-    /** 11/27 회차 id 로 — 옛 키(concert:cache:seats:{공연 id})와 섞이지 않게 접두어를 바꿈 (배포 중 옛 Pod 와 2초 겹침) */
+    /** 회차 id 로 - 옛 키(concert:cache:seats:{공연 id})와 섞이지 않게 접두어를 바꿈 (배포 중 옛 Pod 와 2초 겹침) */
     private static final String PREFIX = "concert:cache:session-seats:";
 
     private final RedisTemplate<String, SeatMap> seatCacheRedis;

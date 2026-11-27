@@ -22,9 +22,9 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * 공연 팔로우 탭 (11/19 · 프론트 요구 1-1 · 1-2 · 1-3) — 로그인 회원이 팔로우한 아티스트가 라인업에 있는 공연만, 칩 · 검색어를 함께.
- * 팔로우 목록은 Member 내부 API (최근 팔로우순 · 팔로워 수). 최근 팔로우순 · 팔로워순은 그 아티스트 순서로(ARTIST_ORDER),
- * 업데이트순은 공연이 최근에 등록 · 수정된 순(UPDATED). 팔로우가 없으면 DB 를 부르지 않고 빈 페이지.
+ * 공연 팔로우 탭 (, 프론트 요구 1-1, 1-2, 1-3) - 로그인 회원이 팔로우한 아티스트가 라인업에 있는 공연만, 칩, 검색어를 함께.
+ * 팔로우 목록은 Member 내부 API (최근 팔로우순, 팔로워 수). 최근 팔로우순, 팔로워순은 그 아티스트 순서로(ARTIST_ORDER),
+ * 업데이트순은 공연이 최근에 등록, 수정된 순(UPDATED). 팔로우가 없으면 DB 를 부르지 않고 빈 페이지.
  */
 @Service
 public class FollowingService {
@@ -42,7 +42,11 @@ public class FollowingService {
         this.concertRepository = concertRepository;
     }
 
-    /** 내부 API (Catalog 팔로우 탭 아티스트 업데이트순) — 아티스트별 가장 최근 공연 등록 · 수정 시각 · 공연 없는 아티스트는 빠짐 */
+    /**
+     * 아티스트별 가장 최근 공연 시각을 조회합니다.
+     *
+     * @param artistIds 대상 아티스트 ID 목록
+     */
     @Transactional(readOnly = true)
     public List<ArtistLatest> latestByArtist(List<Long> artistIds) {
         if (artistIds == null || artistIds.isEmpty()) return List.of();
@@ -55,6 +59,19 @@ public class FollowingService {
 
     public record ArtistLatest(long artistId, OffsetDateTime latestAt) {}
 
+    /**
+     * 팔로우 목록을 기준으로 공연을 조회합니다.
+     *
+     * @param userId 조회하거나 처리할 회원 ID
+     * @param q 검색어
+     * @param regions 공연장 지역 필터 목록
+     * @param genres 장르 필터 목록
+     * @param types 공연 종류 필터 목록
+     * @param saleStatuses 판매 상태 필터 목록
+     * @param sort 목록 정렬 기준
+     * @param page 0부터 시작하는 페이지 번호
+     * @param size 페이지당 조회 개수
+     */
     public PageResult<ConcertSummary> concerts(long userId, String q, List<Region> regions, List<Genre> genres,
                                                List<ConcertEntity.Type> types, List<ConcertEntity.SaleStatus> saleStatuses,
                                                FollowSort sort, int page, int size) {

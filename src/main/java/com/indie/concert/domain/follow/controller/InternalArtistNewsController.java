@@ -10,10 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
-/**
- * POST /internal/concerts/artists/latest — Catalog 팔로우 탭 아티스트 업데이트순 (11/19). 발급자는 news-issuers(catalog)만.
- * 본문 { artistIds: [...] } (최대 1000) → { items: [{ artistId, latestAt }] } · ID 가 많아 쿼리 문자열 대신 본문으로 받습니다.
- */
+/** Catalog -> Concert 내부 API로 아티스트별 최근 공연 등록 또는 수정 시각을 조회합니다. */
 @RestController
 public class InternalArtistNewsController {
 
@@ -23,6 +20,11 @@ public class InternalArtistNewsController {
         this.followingService = followingService;
     }
 
+    /**
+     * 아티스트별 가장 최근 공연 등록 또는 수정 시각을 반환합니다.
+     *
+     * @param request 조회할 아티스트 ID 목록
+     */
     @PostMapping("/internal/concerts/artists/latest")
     public ApiResponse<Map<String, List<ArtistLatest>>> latest(@RequestBody Request request) {
         return ApiResponse.onSuccess(Map.of("items", followingService.latestByArtist(request.artistIds())));

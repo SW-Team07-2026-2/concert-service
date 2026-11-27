@@ -54,22 +54,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 예매 — Saga ① (11 §4 · 15 §5.1 의 준비 → 승인 흐름). Concert 가 흐름을 지휘하고 보상(좌석 반환)까지 책임집니다.
- * <pre>
- * 좌석 선점 (11/04 77A · 티켓링크 방식) — 예매 PENDING = 선점 (holdId = bookingId)
- * ① 좌석 고름(N10 · 1인 N매) → 조건부 UPDATE 로 한 명만 선점 (화면 = 입장 토큰 남은 시간 · 서버 = 화면 + 유예 · DB now()) + Payment prepare
- *    좌석 여러 개는 id 순서로 잡고 전부 잡히거나 하나도 안 잡힙니다 — 하나라도 지면 롤백 · 409 SEAT_TAKEN
- * ② 결제 승인(N16) → 내 선점이고 서버 마감 전일 때만 HELD → PAYING (아니면 410 · 연타면 409 · 토스를 부르지 않음) → Payment 내부 승인
- *    APPROVED: CONFIRMED · SOLD   거절: PAYING → HELD · 새 결제(새 pgOrderId)로 다시 (80B)   응답 없음: PAYING 그대로 503
- * ③ 정리(30초) — 마감이 지난 선점 · 1분 넘게 응답 없는 PAYING → Payment 에 먼저 묻고 → 승인이면 확정, 아니면 EXPIRED · 좌석 반환
- * </pre>
- * 마감이 지난 선점은 정리를 기다리지 않고 다음 사람이 바로 가져갑니다 — 그 예매의 승인은 ②에서 막히므로 돈이 나가지 않습니다.
- * 같은 사용자의 동시 요청은 uq_booking_active 가 줄을 세웁니다 (사용자 락 없음 — 11/04 L2 해소).
- * 11/27 회차 — 예매 하나 = 회차 하나 (좌석의 회차로 정함). 확정 예매는 회차마다 1건, 진행 중 선점은 공연에 하나 (다른 회차를 고르면 409 HOLD_EXISTS).
- * 취소 마감 · 입장 시간은 예매한 회차 시작 기준입니다.
- * 예매 · 좌석을 함께 바꾸는 트랜잭션은 모두 booking → seat 순서로 잠그고, 좌석끼리는 id 순서입니다 (교착 방지 — 11/10).
- * booking.cancelled 는 확정 예매를 취소(환불)할 때만 냅니다 — 결제 전 선택 취소 · 만료 · 탈퇴 정리는 알림이 없습니다.
- * 🔴 좌석을 푸는 모든 경로는 Payment 를 먼저 끝냅니다 — 순서가 반대면 "좌석은 다른 사람에게 팔렸는데 결제는 승인됨"이 생깁니다.
+ * 좌석 선점과 Payment 결제 준비, 승인, 취소를 조정합니다.
+ * 선점은 PENDING 예매로 관리하며 조건부 상태 변경으로 좌석 중복 판매와 중복 반환을 막습니다.
  */
 @Service
 public class BookingService {
@@ -113,16 +99,18 @@ public class BookingService {
     }
 
     /**
-     * N10 — 좌석 선점 = 예매 PENDING + 결제 준비. 좌석은 공연의 maxSeatsPerUser 개까지 (1인 N매).
-     * 🔴 금액은 concert_seat.price 의 합으로만 정합니다 (요청에 금액 없음). 입장 토큰은 여기서만 봅니다 — 선점 마감이 토큰 남은 시간을 이어받아 입장부터 결제하기까지 시계가 하나입니다.
-     * 같은 좌석들로 다시 부르면 진행 중인 선점을 그대로 (더블클릭 · 탭 2개 · 타이머 리셋 없음).
-     * 다른 좌석이면 409 HOLD_EXISTS + 내 bookingId — 「이전단계」는 N13 으로 선택을 취소한 뒤 다시 고릅니다.
-     * 11/27 회차는 좌석으로 정합니다 — 좌석이 모두 같은 회차여야 하고(400 SEAT_SESSION_MISMATCH), 시작한 회차는 409 SESSION_CLOSED.
+     * 같은 회차의 좌석을 선점하고 Payment에 결제를 준비합니다. 금액은 좌석 가격의 합으로 계산합니다.
+     * 같은 좌석의 재요청은 기존 선점을 반환하고 다른 좌석이면 기존 선점을 먼저 취소해야 합니다.
+     *
+     * @param concertId 공연 ID
+     * @param userId 조회하거나 처리할 회원 ID
+     * @param entryToken 대기열 통과 후 발급된 입장 토큰
+     * @param seatIds 선점할 좌석 ID 목록
      */
     public BookingCreated create(long concertId, long userId, String entryToken, List<Long> seatIds) {
         ConcertEntity concert = concertRepository.findById(concertId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
         OptionalLong entryLeft = queueService.requireEntry(concert, userId, entryToken);
-        List<Long> ids = seatIds.stream().sorted().distinct().toList();   // id 순서로 잡습니다 — 겹치는 좌석을 동시에 고른 두 사람이 서로 기다리지 않게
+        List<Long> ids = seatIds.stream().sorted().distinct().toList();   // id 순서로 잡습니다 - 겹치는 좌석을 동시에 고른 두 사람이 서로 기다리지 않게
         if (ids.size() != seatIds.size()) throw new GeneralException(CommonErrorCode.INVALID_REQUEST, "같은 좌석이 두 번 있습니다");
         if (ids.size() > concert.getMaxSeatsPerUser()) {
             throw new GeneralException(SeatErrorCode.SEAT_LIMIT_EXCEEDED,
@@ -146,33 +134,39 @@ public class BookingService {
                 for (long id : ids) {
                     bookingSeatRepository.save(new BookingSeatEntity(b.getId(), id));
                     if (concertSeatRepository.hold(id, sessionId, b.getId(), userId) == 0) {
-                        throw new GeneralException(SeatErrorCode.SEAT_TAKEN).with("seatId", id);   // 롤백 — 예매 · 먼저 잡은 좌석도 남지 않음
+                        throw new GeneralException(SeatErrorCode.SEAT_TAKEN).with("seatId", id);   // 롤백 - 예매, 먼저 잡은 좌석도 남지 않음
                     }
                 }
                 return b;
             });
         } catch (DataIntegrityViolationException e) {
-            // 같은 사용자의 동시 요청 — uq_booking_active 가 먼저 들어간 쪽을 기다렸다가 막습니다. 그 선점을 그대로 돌려줍니다
+            // 같은 사용자의 동시 요청 - uq_booking_active 가 먼저 들어간 쪽을 기다렸다가 막습니다. 그 선점을 그대로 돌려줍니다
             return keepOrClear(bookingRepository.findActive(concertId, userId), sessionId, ids).orElseThrow(() -> e);
         }
         return created(bookingRepository.findById(booking.getId()).orElseThrow(), prepared(booking.getId(), userId, booking.getTotalPrice(), true));
     }
 
     /**
-     * N16 — 결제 승인. 입장 토큰은 보지 않고 선점(bookingId)만 봅니다. ★ 내 선점이고 서버 마감 전이어야 PAYING 으로 바꾸고,
-     * 그 뒤에만 Payment 승인을 부릅니다 — 마감이 지났으면 410 HOLD_EXPIRED 이고 토스는 호출하지 않습니다 (돈 안 나감).
+     * N16 - 결제 승인. 입장 토큰은 보지 않고 선점(bookingId)만 봅니다. 내 선점이고 서버 마감 전이어야 PAYING 으로 바꾸고,
+     * 그 뒤에만 Payment 승인을 부릅니다 - 마감이 지났으면 410 HOLD_EXPIRED 이고 토스는 호출하지 않습니다 (돈 안 나감).
+     *
+     * @param userId 조회하거나 처리할 회원 ID
+     * @param bookingId 예매 ID
+     * @param paymentKey 토스 결제창 인증 후 발급된 결제 키
+     * @param amount 결제 금액(원)
+     * @param forceDecline 로컬 테스트용 PG 강제 거절 코드
      */
     public BookingPaid pay(long userId, long bookingId, String paymentKey, int amount, String forceDecline) {
         rejectClosed(bookingRepository.findByIdAndUserId(bookingId, userId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND)));
         Boolean started = tx.execute(s -> {
-            // booking 먼저 잠급니다 — 확정 · 반환(booking → seat)과 같은 순서라 같은 예매에 결제와 취소가 동시에 와도 교착이 없습니다 (11/10)
+            // booking 먼저 잠급니다 - 확정, 반환(booking -> seat)과 같은 순서라 같은 예매에 결제와 취소가 동시에 와도 교착이 없습니다
             if (bookingRepository.markPaying(bookingId) == 0) return false;
             if (concertSeatRepository.startPaying(bookingId, userId) > 0) return true;
-            s.setRollbackOnly();   // 마감 지남 · 남이 가져감 · 이미 결제 중 — paying_at 도 되돌림
+            s.setRollbackOnly();   // 마감 지남, 남이 가져감, 이미 결제 중 - paying_at 도 되돌림
             return false;
         });
         if (!Boolean.TRUE.equals(started)) {
-            // 트랜잭션 뒤에 다시 읽습니다 — 동시에 온 앞 요청이 결제 중으로 바꿨으면 연타(409), 아니면 마감 지남 · 남이 가져감(410)
+            // 트랜잭션 뒤에 다시 읽습니다 - 동시에 온 앞 요청이 결제 중으로 바꿨으면 연타(409), 아니면 마감 지남, 남이 가져감(410)
             BookingEntity latest = bookingRepository.findById(bookingId).orElseThrow();
             rejectClosed(latest);
             throw new GeneralException(latest.getPayingAt() != null ? SeatErrorCode.SEAT_LOCKED : BookingErrorCode.HOLD_EXPIRED);
@@ -181,29 +175,35 @@ public class BookingService {
         try {
             result = paymentClient.confirm(bookingId, userId, paymentKey, amount, forceDecline);
         } catch (PaymentClient.Rejected e) {
-            stopPaying(bookingId);   // 금액 위조 · 결제 만료 등 — 돈이 나가지 않았으니 다시 선점으로 (마감 그대로)
+            stopPaying(bookingId);   // 금액 위조, 결제 만료 등 - 돈이 나가지 않았으니 다시 선점으로 (마감 그대로)
             throw new GeneralException(e.errorCode(), e.getMessage());
         } catch (PaymentClient.Unavailable e) {
-            // 승인됐는지 모릅니다 — 좌석은 PAYING 그대로(남이 못 가져감). 1분 뒤 정리가 Payment 에 물어 확정 · 반환합니다
+            // 승인됐는지 모릅니다 - 좌석은 PAYING 그대로(남이 못 가져감). 1분 뒤 정리가 Payment 에 물어 확정, 반환합니다
             log.warn("payment_confirm_unknown bookingId={} error={}", bookingId, e.getMessage());
             throw new GeneralException(BookingErrorCode.PAYMENT_PENDING);
         }
         if (result.approved()) {
-            confirm(bookingId);         // payment.completed 를 기다리지 않음 — 이벤트는 조건부 UPDATE 0행으로 끝남
+            confirm(bookingId);         // payment.completed 를 기다리지 않음 - 이벤트는 조건부 UPDATE 0행으로 끝남
             return new BookingPaid(bookingId, "CONFIRMED", result.status(), result.reason(), null);
         }
-        // 거절 (한도초과 · 잔액부족 … — 토스 승인 단계에서 남) → 선점은 유지하고 새 결제로 다시 (80B)
+        // 거절 (한도초과, 잔액부족 ... - 토스 승인 단계에서 남) -> 선점은 유지하고 새 결제로 다시 (80B)
         stopPaying(bookingId);
         BookingEntity now = bookingRepository.findById(bookingId).orElseThrow();
         if (!holdOpen(now)) {
-            release(bookingId, true);   // 마감까지 지남 — 거절된 결제라 돈이 나갈 수 없어 바로 반환
+            release(bookingId, true);   // 마감까지 지남 - 거절된 결제라 돈이 나갈 수 없어 바로 반환
             return new BookingPaid(bookingId, "EXPIRED", result.status(), result.reason(), null);
         }
         return new BookingPaid(bookingId, "PENDING", result.status(), result.reason(),
                 prepared(bookingId, userId, now.getTotalPrice(), false));
     }
 
-    /** N11 — 내 예매 목록 (커서 · 최신순) */
+    /**
+     * N11 - 내 예매 목록 (커서, 최신순)
+     *
+     * @param userId 조회하거나 처리할 회원 ID
+     * @param cursor 다음 조회 시작점을 나타내는 커서
+     * @param size 페이지당 조회 개수
+     */
     @Transactional(readOnly = true)
     public CursorPage<BookingSummary> list(long userId, Cursor cursor, int size) {
         Limit limit = Limit.of(size + 1);
@@ -226,7 +226,12 @@ public class BookingService {
         return CursorPage.of(items, size, b -> new Cursor(null, b.bookingId()));
     }
 
-    /** N12 — 남의 예매는 404 (403 이 아님 — 존재 여부도 알려주지 않습니다) */
+    /**
+     * N12 - 남의 예매는 404 (403 이 아님 - 존재 여부도 알려주지 않습니다)
+     *
+     * @param userId 조회하거나 처리할 회원 ID
+     * @param bookingId 예매 ID
+     */
     @Transactional(readOnly = true)
     public BookingDetail get(long userId, long bookingId) {
         BookingEntity b = bookingRepository.findByIdAndUserId(bookingId, userId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
@@ -241,14 +246,23 @@ public class BookingService {
                 entry.entryStatus(), entry.entryQrOpensAt(), entry.entryQrClosesAt(), entry.checkedInAt(), entry.serverTime());
     }
 
-    /** N13 — 결제 전이면 무효화(선택 취소), 확정이면 회차 시작 24시간 전까지 환불 (FR-CON-14). Payment 를 먼저 취소하고 좌석을 돌려놓습니다 */
+    /**
+     * N13 - 결제 전이면 무효화(선택 취소), 확정이면 회차 시작 24시간 전까지 환불 (FR-CON-14). Payment 를 먼저 취소하고 좌석을 돌려놓습니다
+     *
+     * @param userId 조회하거나 처리할 회원 ID
+     * @param bookingId 예매 ID
+     */
     public BookingDetail cancel(long userId, long bookingId) {
         cancel(bookingRepository.findByIdAndUserId(bookingId, userId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND)),
                 bookingId, "USER_CANCEL");
         return get(userId, bookingId);
     }
 
-    /** 관리자(Studio CS)의 취소 대행 — 회원 본인의 취소(N13)와 같은 규칙이고 Payment 에 남는 사유만 다릅니다 */
+    /**
+     * 관리자(Studio CS)의 취소 대행 - 회원 본인의 취소(N13)와 같은 규칙이고 Payment 에 남는 사유만 다릅니다
+     *
+     * @param bookingId 예매 ID
+     */
     public BookingDetail cancelByAdmin(long bookingId) {
         BookingEntity b = bookingRepository.findById(bookingId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
         cancel(b, bookingId, "ADMIN_CANCEL");
@@ -270,7 +284,11 @@ public class BookingService {
         release(bookingId, false);
     }
 
-    /** payment.completed — 중복 이벤트면 0행 */
+    /**
+     * payment.completed - 중복 이벤트면 0행
+     *
+     * @param bookingId 예매 ID
+     */
     public void confirm(long bookingId) {
         tx.executeWithoutResult(s -> {
             if (bookingRepository.confirm(bookingId) == 1) {
@@ -278,7 +296,7 @@ public class BookingService {
                 BookingEntity b = bookingRepository.findById(bookingId).orElseThrow();
                 ConcertEntity c = concertRepository.findById(b.getConcertId()).orElseThrow();
                 VenueEntity v = venueRepository.findById(c.getVenueId()).orElseThrow();
-                if (sold == 0) log.error("booking_confirmed_without_paying_seat bookingId={}", bookingId);   // 승인은 PAYING 좌석에서만 — 생기면 수동 확인
+                if (sold == 0) log.error("booking_confirmed_without_paying_seat bookingId={}", bookingId);   // 승인은 PAYING 좌석에서만 - 생기면 수동 확인
                 events.bookingCompleted(b, c, sessionStartsAt(b), v, lineupReader.of(c.getId()).stream().map(ArtistRef::id).toList(),
                         sold, OffsetDateTime.now(clock));
                 log.info("booking_confirmed bookingId={} seats={}", bookingId, sold);
@@ -286,50 +304,54 @@ public class BookingService {
             }
             bookingRepository.findById(bookingId).ifPresent(b -> {
                 if (b.getStatus() == BookingEntity.Status.CANCELLED || b.getStatus() == BookingEntity.Status.EXPIRED) {
-                    // 좌석을 푸는 경로는 Payment 를 먼저 취소하므로 정상 흐름에서는 생기지 않습니다 — 생기면 수동 환불 대상
+                    // 좌석을 푸는 경로는 Payment 를 먼저 취소하므로 정상 흐름에서는 생기지 않습니다 - 생기면 수동 환불 대상
                     log.error("payment_completed_for_closed_booking bookingId={} status={}", bookingId, b.getStatus());
                 }
             });
         });
     }
 
-    /** payment.cancelled — 이미 닫힌 예매면 아무것도 하지 않습니다 (좌석 이중 반환 방지) */
+    /**
+     * payment.cancelled - 이미 닫힌 예매면 아무것도 하지 않습니다 (좌석 이중 반환 방지)
+     *
+     * @param bookingId 예매 ID
+     */
     public boolean cancelLocally(long bookingId) {
         return release(bookingId, false);
     }
 
     /**
-     * user.withdrawn (11/27 · TOS v3) — 탈퇴 회원의 예매를 정리합니다. 입장한 예매는 그대로 둡니다 (기록).
-     * <pre>
-     * 결제 전(선점)                        만료 정리와 같음 — Payment 먼저(승인됐으면 확정 → 아래로), 아니면 EXPIRED · 좌석 반환
-     * 확정 · 탈퇴가 회차 24시간 전보다 앞   환불 — 회원 취소와 같은 순서 (Payment 환불 → CANCELLED · 좌석 반환 · booking.cancelled)
-     * 확정 · 그 뒤                         환불 없이 EXPIRED · 좌석은 SOLD 그대로 (다시 팔지 않음)
-     * </pre>
-     * 먼저 정리 표시(withdrawn_at)를 커밋합니다 — 그 뒤로는 QR 발급 · 검표가 막히고, Payment 불통으로 남은 건은 재시도(retryWithdrawn)가 이어서 합니다.
-     * 24시간 기준은 표시 시각이라 재시도가 늦어져도 환불 여부가 바뀌지 않습니다. 표시가 실패하면 예외 → 이벤트 재시도
+     * 탈퇴 정리 시각을 먼저 저장하고 미입장 예매를 정리합니다.
+     * 회차 시작 24시간 전보다 앞이면 환불하고 이후에는 환불 없이 만료합니다. 실패한 처리는 배치가 재시도합니다.
+     *
+     * @param userId 조회하거나 처리할 회원 ID
      */
     public void releaseWithdrawn(long userId) {
         tx.executeWithoutResult(s -> bookingRepository.markWithdrawn(userId, OffsetDateTime.now(clock)));
         List<Long> open = bookingRepository.findWithdrawnIds(userId);
         for (Long bookingId : open) {
-            if (!settleWithdrawn(bookingId)) break;   // Payment 불통 — 나머지는 재시도 주기에
+            if (!settleWithdrawn(bookingId)) break;   // Payment 불통 - 나머지는 재시도 주기에
         }
         if (!open.isEmpty()) log.info("booking_withdrawn userId={} bookings={}", userId, open);
     }
 
-    /** 탈퇴 정리 재시도 — 30초마다 (BookingExpiryJob). 표시는 됐는데 Payment 불통으로 닫지 못한 예매 */
+    /**
+     * 탈퇴 정리 재시도 - 30초마다 (BookingExpiryJob). 표시는 됐는데 Payment 불통으로 닫지 못한 예매
+     *
+     * @param batch 한 번에 처리할 최대 예매 수
+     */
     public void retryWithdrawn(int batch) {
         for (Long bookingId : bookingRepository.findWithdrawnOpen(batch)) {
-            if (!settleWithdrawn(bookingId)) return;   // Payment 불통 — 살아나면 다음 주기에 이어서
+            if (!settleWithdrawn(bookingId)) return;   // Payment 불통 - 살아나면 다음 주기에 이어서
         }
     }
 
-    /** false = Payment 응답 없음 (결과를 모름) — 그대로 두고 다음에 다시 */
+    /** false = Payment 응답 없음 (결과를 모름) - 그대로 두고 다음에 다시 */
     private boolean settleWithdrawn(long bookingId) {
         BookingEntity b = bookingRepository.findById(bookingId).orElseThrow();
         if (b.getStatus() == BookingEntity.Status.PENDING) {
             if (!settle(bookingId, "USER_WITHDRAWN")) return false;
-            b = bookingRepository.findById(bookingId).orElseThrow();   // 승인돼 있었으면 확정됨 → 아래 규칙으로
+            b = bookingRepository.findById(bookingId).orElseThrow();   // 승인돼 있었으면 확정됨 -> 아래 규칙으로
         }
         if (b.getStatus() != BookingEntity.Status.CONFIRMED) return true;
         if (b.getWithdrawnAt().isBefore(cancelDeadline(b))) {
@@ -350,20 +372,22 @@ public class BookingService {
     }
 
     /**
-     * 정리 (30초) — ① 결제 승인 응답을 못 받은 채 1분이 지난 PAYING ② 서버 마감이 지난 선점.
-     * Payment 를 먼저 끝냅니다 (refundApproved=false) — 승인됐으면 APPROVED 가 돌아오고 확정(SOLD), 아니면 EXPIRED · 좌석 반환.
-     * Payment 는 결과를 모르는 승인을 토스에 조회해서 답합니다 (84A) — 토스가 아직 처리 중이면 503 → 그 건만 다음 주기에.
+     * 정리 (30초) - 1 결제 승인 응답을 못 받은 채 1분이 지난 PAYING 2 서버 마감이 지난 선점.
+     * Payment 를 먼저 끝냅니다 (refundApproved=false) - 승인됐으면 APPROVED 가 돌아오고 확정(SOLD), 아니면 EXPIRED, 좌석 반환.
+     * Payment 는 결과를 모르는 승인을 토스에 조회해서 답합니다 (84A) - 토스가 아직 처리 중이면 503 -> 그 건만 다음 주기에.
+     *
+     * @param batch 한 번에 처리할 최대 예매 수
      */
     public void expirePending(int batch) {
         for (Long bookingId : bookingRepository.findStalePaying(props.payingCheckSeconds(), batch)) {
-            settle(bookingId, "EXPIRED");   // 건마다 — 한 건이 토스 처리 중이어도 나머지는 진행
+            settle(bookingId, "EXPIRED");   // 건마다 - 한 건이 토스 처리 중이어도 나머지는 진행
         }
         for (Long bookingId : bookingRepository.findExpiredHolds(batch)) {
-            if (!settle(bookingId, "EXPIRED")) return;   // Payment 불통 — 살아나면 다음 주기에 이어서
+            if (!settle(bookingId, "EXPIRED")) return;   // Payment 불통 - 살아나면 다음 주기에 이어서
         }
     }
 
-    /** false = Payment 응답 없음 (결과를 모름) — 좌석은 그대로 둡니다 */
+    /** false = Payment 응답 없음 (결과를 모름) - 좌석은 그대로 둡니다 */
     private boolean settle(long bookingId, String reason) {
         String status;
         try {
@@ -382,10 +406,8 @@ public class BookingService {
     }
 
     /**
-     * 이 공연의 내 예매가 이미 있을 때 (11/27 회차마다 확정 1건 · 진행 중 선점은 공연에 하나).
-     * 이 회차에 확정이 있으면 409 SEAT_LIMIT_EXCEEDED (다른 회차의 확정은 상관없음).
-     * 살아 있는 선점(또는 결제 중)이면 같은 회차 · 같은 좌석들은 그대로 · 아니면 409 HOLD_EXISTS (다른 회차 선점도 — 좌석을 여러 회차에 쥐고 있지 않게).
-     * 마감이 지난 선점이면 먼저 정리(결제 무효화 → EXPIRED)하고 넘어갑니다 — 새로 선점하게 (정리 주기를 기다리지 않음)
+     * 회차별 확정 예매와 공연별 진행 중 선점을 확인합니다.
+     * 같은 좌석의 유효한 선점은 재사용하고 다른 좌석은 HOLD_EXISTS로 거절합니다. 만료된 선점은 먼저 정리합니다.
      */
     private Optional<BookingCreated> keepOrClear(List<BookingEntity> mine, long sessionId, List<Long> seatIds) {
         for (BookingEntity b : mine) {
@@ -412,8 +434,8 @@ public class BookingService {
     }
 
     /**
-     * 결제 준비 — 같은 예매로 다시 불러도 같은 결과(Payment 멱등). 마지막 결제가 거절이면 Payment 가 새 주문번호를 줍니다 (80B).
-     * 거절 뒤에는 먼저 이전 주문번호를 떼어 둡니다 — 준비가 실패해도 다음 N10 이 다시 준비하게.
+     * 결제 준비 - 같은 예매로 다시 불러도 같은 결과(Payment 멱등). 마지막 결제가 거절이면 Payment 가 새 주문번호를 줍니다 (80B).
+     * 거절 뒤에는 먼저 이전 주문번호를 떼어 둡니다 - 준비가 실패해도 다음 N10 이 다시 준비하게.
      * Payment 불통: 새 선점(fresh)이면 선점을 풀고 503, 이어서 쓰는 선점이면 그대로 두고 503
      */
     private String prepared(long bookingId, long userId, int amount, boolean fresh) {
@@ -423,14 +445,14 @@ public class BookingService {
             prepared = paymentClient.prepare(bookingId, userId, amount);
         } catch (PaymentClient.Unavailable e) {
             log.warn("payment_prepare_failed bookingId={} error={}", bookingId, e.getMessage());
-            if (fresh) release(bookingId, false);   // 결제 준비 전이라 돈이 나갈 수 없습니다 — 선점만 풀고 다시 시도하게
+            if (fresh) release(bookingId, false);   // 결제 준비 전이라 돈이 나갈 수 없습니다 - 선점만 풀고 다시 시도하게
             throw paymentUnavailable("결제를 준비하지 못했습니다. 잠시 후 다시 시도해주세요");
         }
         tx.executeWithoutResult(s -> bookingRepository.attachPgOrderId(bookingId, prepared.pgOrderId()));
         return prepared.pgOrderId();
     }
 
-    /** booking → seat 순서 (확정 · 반환과 같음) */
+    /** booking -> seat 순서 (확정, 반환과 같음) */
     private void stopPaying(long bookingId) {
         tx.executeWithoutResult(s -> {
             bookingRepository.clearPaying(bookingId);
@@ -445,8 +467,8 @@ public class BookingService {
     }
 
     /**
-     * 예매 닫기 + 좌석 반환 — 예매 전이가 1행일 때만 좌석을 풉니다 (확보 · 판매된 좌석만 바뀜).
-     * 취소는 예매 행을 먼저 잠그고 상태를 봅니다 — 확정 예매였으면(환불) 같은 트랜잭션에서 booking.cancelled
+     * 예매 닫기 + 좌석 반환 - 예매 전이가 1행일 때만 좌석을 풉니다 (확보, 판매된 좌석만 바뀜).
+     * 취소는 예매 행을 먼저 잠그고 상태를 봅니다 - 확정 예매였으면(환불) 같은 트랜잭션에서 booking.cancelled
      */
     private boolean release(long bookingId, boolean expired) {
         return Boolean.TRUE.equals(tx.execute(s -> {
@@ -465,7 +487,7 @@ public class BookingService {
         }));
     }
 
-    /** 결제 행이 없으면(준비 실패) NOT_FOUND — 돈이 나간 적이 없으니 그대로 진행합니다 */
+    /** 결제 행이 없으면(준비 실패) NOT_FOUND - 돈이 나간 적이 없으니 그대로 진행합니다 */
     private String cancelPayment(long bookingId, String reason, boolean refundApproved) {
         try {
             return paymentClient.cancel(bookingId, reason, refundApproved);
@@ -489,17 +511,17 @@ public class BookingService {
         return new BookingCreated(b.getId(), b.getTotalPrice(), pgOrderId, "PENDING", expiresAt(b), expiresIn(b));
     }
 
-    /** 화면 마감 = 서버 마감 − 유예 — 프론트 타이머가 0 이 되는 시각 */
+    /** 화면 마감 = 서버 마감 - 유예 - 프론트 타이머가 0 이 되는 시각 */
     private OffsetDateTime expiresAt(BookingEntity b) {
         return b.getHoldExpiresAt().minusSeconds(props.holdGraceSeconds());
     }
 
-    /** 화면 마감까지 남은 초 (DB 시계 기준) — 프론트는 이 값으로 타이머를 돌립니다 (기기 시계가 틀려도 맞음) */
+    /** 화면 마감까지 남은 초 (DB 시계 기준) - 프론트는 이 값으로 타이머를 돌립니다 (기기 시계가 틀려도 맞음) */
     private long expiresIn(BookingEntity b) {
         return Math.max(0, Duration.between(dbNow(), expiresAt(b)).toSeconds());
     }
 
-    /** 확정 예매 환불 마감 = 회차 시작 − cancel-deadline-hours (회원 취소 · 탈퇴 환불 같은 기준) */
+    /** 확정 예매 환불 마감 = 회차 시작 - cancel-deadline-hours (회원 취소, 탈퇴 환불 같은 기준) */
     private OffsetDateTime cancelDeadline(BookingEntity b) {
         return sessionStartsAt(b).minusHours(props.cancelDeadlineHours());
     }
@@ -513,7 +535,7 @@ public class BookingService {
         return b.getHoldExpiresAt() != null && b.getHoldExpiresAt().isAfter(dbNow());
     }
 
-    /** 지금부터 서버 마감까지 초 = 화면 시계(입장 토큰 남은 초 · 최대 hold-minutes) + 유예. 대기열을 끈 공연은 hold-minutes 전체 */
+    /** 지금부터 서버 마감까지 초 = 화면 시계(입장 토큰 남은 초, 최대 hold-minutes) + 유예. 대기열을 끈 공연은 hold-minutes 전체 */
     private long holdSeconds(OptionalLong entryLeft) {
         long screen = props.holdMinutes() * 60;
         return Math.min(screen, entryLeft.orElse(screen)) + props.holdGraceSeconds();

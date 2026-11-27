@@ -10,13 +10,8 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 /**
- * Payment 이벤트 — Saga ① 의 결과 반영. orderType=TICKET 만 (GOODS 는 Catalog 몫).
- * <pre>
- * payment.completed  → 예매 CONFIRMED · 좌석 SOLD · booking.completed
- * payment.failed     → 무시 — 거절돼도 선점은 유지하고 새 결제로 다시 합니다 (11/04 80B). 응답을 못 받은 거절은 1분 뒤 정리가 처리
- * payment.cancelled  → 예매 CANCELLED · 좌석 반환 (Payment P4 는 TICKET 을 받지 않으므로 N13 · 만료가 부른 취소)
- * </pre>
- * 멱등 — 상태 전이가 조건부 UPDATE 라 같은 이벤트가 두 번 와도 한 번만 반영됩니다 (별도 처리 테이블 불필요).
+ * Payment -> Kafka 결제 이벤트 -> Concert 티켓 예매와 좌석 상태 반영.
+ * 승인은 확정, 취소는 좌석 반환으로 처리하며 결제 거절 시에는 선점을 유지합니다.
  */
 @Component
 public class PaymentEventConsumer {
@@ -29,6 +24,12 @@ public class PaymentEventConsumer {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 티켓 결제 이벤트를 받아 예매와 좌석 상태에 반영합니다.
+     *
+     * @param record Kafka에서 수신한 이벤트 레코드
+     * @param ack 처리 완료 후 오프셋을 커밋할 승인 객체
+     */
     @KafkaListener(topics = {"payment.completed", "payment.failed", "payment.cancelled"})
     public void onPayment(ConsumerRecord<String, String> record, Acknowledgment ack) throws JsonProcessingException {
         EventEnvelope e = EventEnvelope.parse(objectMapper, record.value());
@@ -43,7 +44,7 @@ public class PaymentEventConsumer {
         ack.acknowledge();
     }
 
-    /** 형식이 틀리면 IllegalArgumentException → 재시도 없이 DLT */
+    /** 형식이 틀리면 IllegalArgumentException -> 재시도 없이 DLT */
     private static long bookingId(String orderRef) {
         if (orderRef == null) throw new IllegalArgumentException("payment event without orderRef");
         return Long.parseLong(orderRef);

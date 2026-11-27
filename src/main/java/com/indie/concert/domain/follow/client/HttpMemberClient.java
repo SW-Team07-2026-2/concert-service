@@ -14,7 +14,7 @@ import org.springframework.web.client.RestClientException;
 
 import java.util.List;
 
-/** Concert → Member 내부 호출 (X-Internal-Token · iss=concert · aud=member) — GET /internal/members/{userId}/follows · 타임아웃 1초 / 3초 */
+/** Concert -> Member 팔로우 전용 포트의 내부 API에서 회원 팔로우 목록을 조회합니다. */
 @Component
 public class HttpMemberClient implements MemberClient {
 

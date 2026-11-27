@@ -9,7 +9,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
-/** venue — 관리자(Studio)가 등록합니다. 이름이 공통 키 (같은 이름 두 번 등록 불가) · 배치는 floor ─< section ─< seat */
+/** venue - 관리자(Studio)가 등록합니다. 이름이 공통 키 (같은 이름 두 번 등록 불가), 배치는 floor ─< section ─< seat */
 @Entity
 @Table(name = "venue", uniqueConstraints = @UniqueConstraint(name = "uq_venue_name", columnNames = "name"))
 public class VenueEntity {
