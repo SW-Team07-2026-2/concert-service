@@ -111,7 +111,7 @@ public class EntryService {
      * -> QR 만료(ENTRY_QR_EXPIRED) -> 입장 기록 (한 번만, 동시에 두 번 찍어도 1행)
      *
      * @param concertId 공연 ID
-     * @param token 검증하거나 저장할 토큰
+     * @param token 입장 QR 토큰
      * @param checkerId 검표 관리자 ID
      */
     @Transactional

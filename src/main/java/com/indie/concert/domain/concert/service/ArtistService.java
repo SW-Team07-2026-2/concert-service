@@ -28,7 +28,7 @@ public class ArtistService {
      * 이벤트 시각을 비교해 아티스트 정보와 공연 장르를 갱신합니다.
      *
      * @param artistId 아티스트 ID
-     * @param name 아티스트 또는 상품 이름
+     * @param name 아티스트 이름
      * @param genreCode 아티스트 장르 코드
      * @param occurredAt 이벤트 발생 시각
      */

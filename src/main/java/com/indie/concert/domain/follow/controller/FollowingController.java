@@ -37,7 +37,7 @@ public class FollowingController {
      * @param q 검색어
      * @param region 공연장 지역 필터
      * @param genre 장르 필터 목록
-     * @param type 처리할 종류
+     * @param type 공연 종류 필터 목록
      * @param saleStatus 판매 상태 필터 목록
      * @param sort 목록 정렬 기준
      * @param page 0부터 시작하는 페이지 번호

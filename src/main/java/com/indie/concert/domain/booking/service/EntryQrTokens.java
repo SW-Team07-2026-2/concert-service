@@ -73,7 +73,7 @@ public class EntryQrTokens {
     /**
      * 입장 QR 토큰을 검증하고 내용을 반환합니다.
      *
-     * @param token 검증하거나 저장할 토큰
+     * @param token 입장 QR 토큰
      */
     public Claims parse(String token) {
         Long bookingId;

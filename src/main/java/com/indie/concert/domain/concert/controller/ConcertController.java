@@ -58,7 +58,7 @@ public class ConcertController {
      * @param to 공연 조회 종료일
      * @param region 공연장 지역 필터
      * @param genre 장르 필터 목록
-     * @param type 처리할 종류
+     * @param type 공연 종류 필터 목록
      * @param saleStatus 판매 상태 필터 목록
      * @param artistId 아티스트 ID
      * @param artistIds 대상 아티스트 ID 목록
@@ -93,7 +93,7 @@ public class ConcertController {
      * @param q 검색어
      * @param region 공연장 지역 필터
      * @param genre 장르 필터 목록
-     * @param type 처리할 종류
+     * @param type 공연 종류 필터 목록
      * @param saleStatus 판매 상태 필터 목록
      * @param page 0부터 시작하는 페이지 번호
      * @param size 페이지당 조회 개수
