@@ -48,13 +48,7 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
     }
 
     @Override
-    @Query("select c from ConcertEntity c where c.startsAt <= :opensBy "
-            + "and (c.endsAt >= :now or (c.endsAt is null and c.startsAt >= :startedAfter)) order by c.startsAt asc")
-    List<ConcertEntity> findEntryOpen(@Param("now") OffsetDateTime now, @Param("opensBy") OffsetDateTime opensBy,
-                                      @Param("startedAfter") OffsetDateTime startedAfter);
-
-    @Override
-    @Query("select c from ConcertEntity c where c.queueEnabled = true and c.bookingOpenAt <= :now and c.startsAt > :now")
+    @Query("select c from ConcertEntity c where c.queueEnabled = true and c.bookingOpenAt <= :now and c.lastStartsAt > :now")
     List<ConcertEntity> findQueueActive(@Param("now") OffsetDateTime now);
 
     /** idx_concert_artist_artist 로 그 아티스트 공연만 · genre 는 null 일 수 있어 타입을 적어 둡니다 */
@@ -71,9 +65,10 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
     @Query(value = "SELECT EXISTS (SELECT 1 FROM concert_seat WHERE concert_id = :concertId)", nativeQuery = true)
     boolean hasSeats(@Param("concertId") long concertId);
 
+    /** 11/27 from 이후 회차가 남은 공연 — 여러 날 공연은 첫 회차가 지나도 남은 회차가 있으면 나옵니다 */
     private static Specification<ConcertEntity> startsFrom(OffsetDateTime from) {
         if (from == null) return null;
-        return (root, query, cb) -> cb.greaterThanOrEqualTo(root.get("startsAt"), from);
+        return (root, query, cb) -> cb.greaterThanOrEqualTo(root.get("lastStartsAt"), from);
     }
 
     private static Specification<ConcertEntity> startsBefore(OffsetDateTime to) {
@@ -142,11 +137,11 @@ public interface ConcertJpaRepository extends JpaRepository<ConcertEntity, Long>
         };
     }
 
-    /** 진행 현황 — ConcertEntity.saleStatus(now) 와 같은 기준 (시작 이후 CLOSED · 오픈 전이나 미정 SCHEDULED · 그 사이 ON_SALE) */
+    /** 진행 현황 — ConcertEntity.saleStatus(now) 와 같은 기준 (마지막 회차 시작 이후 CLOSED · 오픈 전이나 미정 SCHEDULED · 그 사이 ON_SALE) */
     private static Specification<ConcertEntity> saleStatusIn(Collection<ConcertEntity.SaleStatus> statuses, OffsetDateTime now) {
         if (statuses == null || statuses.isEmpty()) return null;
         return (root, query, cb) -> {
-            Path<OffsetDateTime> starts = root.get("startsAt");
+            Path<OffsetDateTime> starts = root.get("lastStartsAt");
             Path<OffsetDateTime> opens = root.get("bookingOpenAt");
             return cb.or(statuses.stream().map(s -> switch (s) {
                 case CLOSED -> cb.lessThanOrEqualTo(starts, now);

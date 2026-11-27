@@ -39,7 +39,7 @@ public interface VenueJpaRepository extends JpaRepository<VenueEntity, Long>, Jp
             Subquery<Long> upcoming = query.subquery(Long.class);
             Root<ConcertEntity> c = upcoming.from(ConcertEntity.class);
             upcoming.select(c.get("id"))
-                    .where(cb.equal(c.get("venueId"), root.get("id")), cb.greaterThanOrEqualTo(c.get("startsAt"), from));
+                    .where(cb.equal(c.get("venueId"), root.get("id")), cb.greaterThanOrEqualTo(c.get("lastStartsAt"), from));
             return cb.exists(upcoming);
         };
     }

@@ -6,9 +6,11 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import com.indie.concert.domain.concert.dto.response.ConcertSummary;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
+import com.indie.concert.domain.concert.entity.ConcertSessionEntity;
 import com.indie.concert.domain.concert.entity.Region;
 import com.indie.concert.domain.concert.entity.VenueEntity;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
+import com.indie.concert.domain.concert.repository.ConcertSessionRepository;
 import com.indie.concert.domain.concert.repository.VenueRepository;
 import com.indie.concert.global.config.ConcertProperties;
 import org.junit.jupiter.api.Test;
@@ -35,9 +37,10 @@ class ConcertServiceTest {
     private static final String POSTER = "https://img.indig.co.kr/poster/2026/11/00000000-0000-0000-0000-000000000000.jpg";
 
     private final ConcertRepository concerts = mock(ConcertRepository.class);
+    private final ConcertSessionRepository sessions = mock(ConcertSessionRepository.class);
     private final VenueRepository venues = mock(VenueRepository.class);
     private final LineupReader lineups = mock(LineupReader.class);
-    private final ConcertService service = new ConcertService(concerts, venues, lineups,
+    private final ConcertService service = new ConcertService(concerts, sessions, venues, lineups,
             new ConcertProperties(null, null, null, "Asia/Seoul", null, null, null, null, null, null, null),
             Clock.fixed(NOW.toInstant(), ZoneOffset.UTC));
 
@@ -59,7 +62,7 @@ class ConcertServiceTest {
     @Test
     void publicDetailIsCachedButSaleStatusFollowsClock() {
         MovableClock clock = new MovableClock(NOW.toInstant());
-        ConcertService cached = new ConcertService(concerts, venues, lineups,
+        ConcertService cached = new ConcertService(concerts, sessions, venues, lineups,
                 new ConcertProperties(null, null, null, "Asia/Seoul", null, null, null, null, null, null, null), clock);
         ConcertEntity c = new ConcertEntity(7L, "공연 1", ConcertEntity.Type.SOLO, "INDIE_ROCK", STARTS, null, 55000,
                 NOW.plusSeconds(1), true, 4, null, null, NOW);
@@ -68,13 +71,45 @@ class ConcertServiceTest {
         ReflectionTestUtils.setField(venue, "id", 7L);
         when(concerts.findById(1L)).thenReturn(java.util.Optional.of(c));
         when(venues.findById(7L)).thenReturn(java.util.Optional.of(venue));
+        ConcertSessionEntity session = mock(ConcertSessionEntity.class);
+        when(session.getId()).thenReturn(11L);
+        when(session.getStartsAt()).thenReturn(STARTS);
+        when(sessions.findByConcertIdOrderByStartsAtAsc(1L)).thenReturn(List.of(session));
 
         assertThat(cached.getPublic(1L).saleStatus()).isEqualTo("SCHEDULED");
         clock.now = NOW.plusSeconds(2).toInstant();
         assertThat(cached.getPublic(1L).saleStatus()).isEqualTo("ON_SALE");
+        assertThat(cached.getPublic(1L).sessions()).singleElement()
+                .satisfies(s -> assertThat(s.id() + ":" + s.saleStatus()).isEqualTo("11:ON_SALE"));   // 회차 판매 상태도 요청 시각으로
         assertThat(cached.getPublic(1L).title()).isEqualTo("공연 1");
 
         verify(concerts, times(1)).findById(1L);
+    }
+
+    /** 11/27 여러 날 공연 — 판매 상태는 마지막 회차 기준 · 회차마다 따로 (첫 회차가 지나도 공연은 판매 중) */
+    @Test
+    void saleStatusFollowsLastSessionAndEachSession() {
+        ConcertEntity c = new ConcertEntity(7L, "공연 1", ConcertEntity.Type.SOLO, "INDIE_ROCK", NOW.minusHours(1), null, 55000,
+                NOW.minusDays(1), true, 4, null, null, NOW);
+        c.schedule(NOW.minusHours(1), NOW.plusDays(1), NOW);
+        ReflectionTestUtils.setField(c, "id", 1L);
+        VenueEntity venue = new VenueEntity("공연장", Region.SEOUL, null, 100);
+        ReflectionTestUtils.setField(venue, "id", 7L);
+        when(concerts.findById(1L)).thenReturn(java.util.Optional.of(c));
+        when(venues.findById(7L)).thenReturn(java.util.Optional.of(venue));
+        ConcertSessionEntity past = mock(ConcertSessionEntity.class);
+        when(past.getId()).thenReturn(11L);
+        when(past.getStartsAt()).thenReturn(NOW.minusHours(1));
+        ConcertSessionEntity next = mock(ConcertSessionEntity.class);
+        when(next.getId()).thenReturn(12L);
+        when(next.getStartsAt()).thenReturn(NOW.plusDays(1));
+        when(sessions.findByConcertIdOrderByStartsAtAsc(1L)).thenReturn(List.of(past, next));
+
+        var detail = service.get(1L);
+
+        assertThat(detail.saleStatus()).isEqualTo("ON_SALE");
+        assertThat(detail.lastStartsAt()).isEqualTo(NOW.plusDays(1));
+        assertThat(detail.sessions()).extracting(s -> s.id() + ":" + s.saleStatus()).containsExactly("11:CLOSED", "12:ON_SALE");
     }
 
     private static final class MovableClock extends Clock {

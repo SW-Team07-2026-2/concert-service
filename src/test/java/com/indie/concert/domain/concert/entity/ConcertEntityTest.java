@@ -42,7 +42,7 @@ class ConcertEntityTest {
     @Test
     void updateChangesOnlyGivenValues() {
         ConcertEntity c = concert(OPENS);
-        c.update(null, null, null, STARTS.plusHours(2), null, null, false, 2, STARTS);
+        c.update(null, null, STARTS.plusHours(2), null, null, false, 2, STARTS);
 
         assertThat(c.getEndsAt()).isEqualTo(STARTS.plusHours(2));
         assertThat(c.isQueueEnabled()).isFalse();

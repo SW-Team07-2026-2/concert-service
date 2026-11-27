@@ -10,12 +10,13 @@ import java.util.List;
  * available = 판매되지 않은 좌석 수 (선택 중은 풀릴 수 있어 포함) · maxSeatsPerUser = 한 번에 고를 수 있는 좌석 수.
  * expiresAt · expiresIn — 입장 토큰(X-Entry-Token)을 보냈을 때만: 화면 타이머 마감과 이 API 를 부른 시점 기준 남은 초.
  * 프론트는 expiresIn 으로 타이머를 돌립니다 (기기 시계가 틀려도 맞음). 배치 · 상태는 캐시(캐시 Redis 2초 + ✏️ 11/25 Pod 1초), 타이머는 요청마다 계산합니다.
+ * 11/27 sessionId = 이 좌석 화면의 회차 (회차마다 좌석 한 벌 · maxSeatsPerUser 도 회차마다)
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public record SeatMap(long concertId, int maxSeatsPerUser, long total, long available, OffsetDateTime expiresAt,
+public record SeatMap(long concertId, long sessionId, int maxSeatsPerUser, long total, long available, OffsetDateTime expiresAt,
                       Long expiresIn, List<FloorView> floors) {
 
     public SeatMap withTimer(OffsetDateTime expiresAt, long expiresIn) {
-        return new SeatMap(concertId, maxSeatsPerUser, total, available, expiresAt, expiresIn, floors);
+        return new SeatMap(concertId, sessionId, maxSeatsPerUser, total, available, expiresAt, expiresIn, floors);
     }
 }

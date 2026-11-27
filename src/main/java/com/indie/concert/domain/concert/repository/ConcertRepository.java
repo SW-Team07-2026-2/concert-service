@@ -25,19 +25,16 @@ public interface ConcertRepository {
     /** 공연 목록 — 조건은 전부 선택 (null 이면 무시). 정렬은 pageable 이 정합니다 */
     Slice<ConcertEntity> search(Filter filter, Pageable pageable);
 
-    /** 캘린더 — 시작 시각 [from, to) · artistIds 가 비어 있으면 전체 (라인업에 한 명이라도 있으면 포함) */
+    /** 캘린더 — 회차가 [from, to) 에 걸치는 공연 (첫 회차 < to · 마지막 회차 ≥ from) · artistIds 가 비어 있으면 전체 (라인업에 한 명이라도 있으면 포함) */
     List<ConcertEntity> findForCalendar(OffsetDateTime from, OffsetDateTime to, Collection<Long> artistIds);
 
     /** 11/19 팔로우 탭 업데이트순 (Catalog 내부 호출) — 아티스트별 그 아티스트가 나오는 공연의 가장 최근 등록 · 수정 시각 · [artistId, max(updated_at)] */
     List<Object[]> findLatestUpdatedByArtist(Collection<Long> artistIds);
 
-    /** 공연장 상세 — 공연장의 예정 공연 */
-    List<ConcertEntity> findByVenueIdAndStartsAtGreaterThanEqualOrderByStartsAtAsc(Long venueId, OffsetDateTime now, Limit limit);
+    /** 공연장 상세 — 공연장의 예정 공연 (11/27 아직 시작하지 않은 회차가 남은 공연) */
+    List<ConcertEntity> findByVenueIdAndLastStartsAtGreaterThanEqualOrderByStartsAtAsc(Long venueId, OffsetDateTime now, Limit limit);
 
-    /** 검표 — 입장이 열린 공연: 시작이 opensBy 이전이고, 끝 시각이 now 이후 (끝 시각이 없으면 시작이 startedAfter 이후) */
-    List<ConcertEntity> findEntryOpen(OffsetDateTime now, OffsetDateTime opensBy, OffsetDateTime startedAfter);
-
-    /** 대기열 입장 · 스냅샷 대상 — 대기열을 켠 판매 중 공연 */
+    /** 대기열 입장 · 스냅샷 대상 — 대기열을 켠 판매 중 공연 (마지막 회차 시작 전) */
     List<ConcertEntity> findQueueActive(OffsetDateTime now);
 
     /** artist.updated — 그 아티스트의 단독 공연 장르를 아티스트 장르로. 페스티벌은 관리자 값이라 건드리지 않습니다. 바뀐 행 수 */
@@ -49,7 +46,7 @@ public interface ConcertRepository {
     ConcertEntity save(ConcertEntity concert);
 
     /**
-     * from 이상 · to 미만 (null 이면 끝 없음). 목록 조건은 하나라도 맞으면 (null · 빈 목록이면 무시) —
+     * from 이상 · to 미만 (null 이면 끝 없음) — 11/27 회차가 그 사이에 걸치는 공연 (마지막 회차 ≥ from · 첫 회차 < to). 목록 조건은 하나라도 맞으면 (null · 빈 목록이면 무시) —
      * regions 는 공연장 지역 · genres 는 공연 장르 · artistIds 는 라인업에 있는 공연 · q 는 공연 제목 · 라인업 아티스트 이름 ·
      * saleStatuses 는 now 기준 판매 상태 (ConcertEntity.saleStatus 와 같은 기준). sort=ARTIST_ORDER 면 artistIds 순서로 정렬합니다
      */

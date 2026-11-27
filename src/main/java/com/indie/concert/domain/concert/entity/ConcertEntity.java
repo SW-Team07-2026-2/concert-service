@@ -41,9 +41,13 @@ public class ConcertEntity {
 
     private String genre;
 
+    /** 첫 회차 시작 — 목록 정렬 · 알림 (회차를 바꾸면 ConcertAdminService 가 맞춤) */
     private OffsetDateTime startsAt;
 
-    /** 공연 끝 시각 — 모르면 null (입장 QR 마감은 시작 + entry.close-after-hours) */
+    /** 11/27 마지막 회차 시작 — 판매 · 대기열은 이 시각까지 (회차가 하나면 startsAt 과 같음) */
+    private OffsetDateTime lastStartsAt;
+
+    /** 공연 기간 끝 — 표시용 · 모르면 null (입장 QR 시간은 회차 시작으로만 정합니다) */
     private OffsetDateTime endsAt;
 
     /** 목록에 보여 줄 대표 가격 — 결제 금액은 concert_seat.price */
@@ -86,6 +90,7 @@ public class ConcertEntity {
         this.type = type;
         this.genre = genre;
         this.startsAt = startsAt;
+        this.lastStartsAt = startsAt;
         this.endsAt = endsAt;
         this.price = price;
         this.bookingOpenAt = bookingOpenAt;
@@ -96,12 +101,11 @@ public class ConcertEntity {
         this.updatedAt = now;
     }
 
-    /** 관리자 수정 — null 인 값은 그대로 둡니다. 종류(SOLO · FESTIVAL)와 수집 출처는 바꾸지 않습니다 */
-    public void update(Long venueId, String title, OffsetDateTime startsAt, OffsetDateTime endsAt, Integer price,
+    /** 관리자 수정 — null 인 값은 그대로 둡니다. 종류(SOLO · FESTIVAL)와 수집 출처는 바꾸지 않습니다. 회차 시각은 schedule 로 */
+    public void update(Long venueId, String title, OffsetDateTime endsAt, Integer price,
                        OffsetDateTime bookingOpenAt, Boolean queueEnabled, Integer maxSeatsPerUser, OffsetDateTime now) {
         if (venueId != null) this.venueId = venueId;
         if (title != null) this.title = title;
-        if (startsAt != null) this.startsAt = startsAt;
         if (endsAt != null) this.endsAt = endsAt;
         if (price != null) this.price = price;
         if (bookingOpenAt != null) this.bookingOpenAt = bookingOpenAt;
@@ -127,14 +131,24 @@ public class ConcertEntity {
         this.updatedAt = now;
     }
 
-    /** 공연 시작 이후 CLOSED · 오픈 시각 전(또는 미정) SCHEDULED · 그 사이 ON_SALE */
-    public SaleStatus saleStatus(OffsetDateTime now) {
-        return saleStatus(startsAt, bookingOpenAt, now);
+    /** 11/27 회차 — 첫 · 마지막 회차 시작을 옮겨 둡니다 (ConcertAdminService 가 회차를 바꿀 때만) */
+    public void schedule(OffsetDateTime firstStartsAt, OffsetDateTime lastStartsAt, OffsetDateTime now) {
+        this.startsAt = firstStartsAt;
+        this.lastStartsAt = lastStartsAt;
+        this.updatedAt = now;
     }
 
-    /** ✏️ 11/25 캐시에 둔 공연 값으로도 같은 규칙 — 캐시가 몇 초 묵어도 판매 상태는 요청 시각으로 계산합니다 */
-    public static SaleStatus saleStatus(OffsetDateTime startsAt, OffsetDateTime bookingOpenAt, OffsetDateTime now) {
-        if (!now.isBefore(startsAt)) return SaleStatus.CLOSED;
+    /** 마지막 회차 시작 이후 CLOSED · 오픈 시각 전(또는 미정) SCHEDULED · 그 사이 ON_SALE (회차 하나하나의 마감은 회차 시작) */
+    public SaleStatus saleStatus(OffsetDateTime now) {
+        return saleStatus(lastStartsAt, bookingOpenAt, now);
+    }
+
+    /**
+     * ✏️ 11/25 캐시에 둔 공연 값으로도 같은 규칙 — 캐시가 몇 초 묵어도 판매 상태는 요청 시각으로 계산합니다.
+     * closesAt = 판매가 끝나는 시각 — 공연이면 마지막 회차 시작 · 회차 하나면 그 회차 시작 (11/27)
+     */
+    public static SaleStatus saleStatus(OffsetDateTime closesAt, OffsetDateTime bookingOpenAt, OffsetDateTime now) {
+        if (!now.isBefore(closesAt)) return SaleStatus.CLOSED;
         if (bookingOpenAt == null || now.isBefore(bookingOpenAt)) return SaleStatus.SCHEDULED;
         return SaleStatus.ON_SALE;
     }
@@ -145,6 +159,7 @@ public class ConcertEntity {
     public Type getType() { return type; }
     public String getGenre() { return genre; }
     public OffsetDateTime getStartsAt() { return startsAt; }
+    public OffsetDateTime getLastStartsAt() { return lastStartsAt; }
     public OffsetDateTime getEndsAt() { return endsAt; }
     public Integer getPrice() { return price; }
     public OffsetDateTime getBookingOpenAt() { return bookingOpenAt; }

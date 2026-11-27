@@ -1,8 +1,9 @@
 -- concert 스키마 (구조) — 테이블 · 키 · 인덱스. 값 목록(CHECK)은 V2__concert_values.sql 에 있습니다.
 -- 공연 · 공연장 배치는 관리자(Studio)를 거쳐서만 들어옵니다 (수집기 직접 적재 경로 없음).
 --   공연장 배치  venue ─< floor ─< section ─< seat            (무대 그리기 결과 · 공연장에 한 번 등록 · 위치만)
---   판매        concert ─< concert_seat >─ seat              (공연마다 좌석별 가격 · 상태)
---   예매        booking ─< booking_seat >─ concert_seat      (1인 N매 · concert.max_seats_per_user)
+--   회차        concert ─< concert_session                   (11/27 · 공연 하나에 날짜 · 시각이 다른 회차 여러 개)
+--   판매        concert_session ─< concert_seat >─ seat      (회차마다 좌석 상태 · 가격은 공연 단위로 모든 회차에 같게)
+--   예매        booking ─< booking_seat >─ concert_seat      (회차마다 1인 N매 · concert.max_seats_per_user)
 --   라인업      concert ─< concert_artist >─ artist          (artist 는 Catalog artist.updated 복제)
 -- 스키마 간 FK 없음 — user_id 는 member.users 를 가리키지만 FK 를 걸지 않습니다
 -- 🔴 마이그레이션은 이 파일(V1 구조)과 V2(값) 두 개만 둡니다 — 구조를 바꾸면 이 파일을 고치고 DB 스키마를 비운 뒤 다시 올립니다.
@@ -63,8 +64,9 @@ CREATE TABLE concert (
     title              VARCHAR(200) NOT NULL,
     type               VARCHAR(16)  NOT NULL,            -- SOLO | FESTIVAL (V2 ck_concert_type)
     genre              VARCHAR(32),                      -- SOLO = 그 아티스트 장르 (artist.updated 로 함께 갱신) · FESTIVAL = 관리자가 지정
-    starts_at          TIMESTAMPTZ  NOT NULL,
-    ends_at            TIMESTAMPTZ,
+    starts_at          TIMESTAMPTZ  NOT NULL,            -- 첫 회차 시작 (concert_session 의 가장 이른 시각 · 서비스가 맞춤) — 목록 정렬 · 알림
+    last_starts_at     TIMESTAMPTZ  NOT NULL,            -- 마지막 회차 시작 (11/27) — 판매 · 대기열은 이 시각까지
+    ends_at            TIMESTAMPTZ,                      -- 공연 기간 끝 (표시용 · 모르면 NULL)
     price              INTEGER CHECK (price >= 0),       -- 목록에 보여 줄 대표 가격 · 결제 금액은 concert_seat.price
     booking_open_at    TIMESTAMPTZ,                      -- NULL = 미정
     queue_enabled      BOOLEAN      NOT NULL DEFAULT TRUE,
@@ -79,12 +81,24 @@ CREATE TABLE concert (
     updated_at         TIMESTAMPTZ  NOT NULL,
     CONSTRAINT ck_concert_ends_after_start CHECK (ends_at > starts_at),
     CONSTRAINT ck_concert_open_before_start CHECK (booking_open_at < starts_at),
+    CONSTRAINT ck_concert_last_after_first CHECK (last_starts_at >= starts_at),
     CONSTRAINT ck_concert_source CHECK ((source IS NULL) = (external_id IS NULL))
 );
 CREATE UNIQUE INDEX uq_concert_source ON concert(source, external_id) WHERE source IS NOT NULL;
 CREATE INDEX idx_concert_starts ON concert(starts_at);
+CREATE INDEX idx_concert_last_starts ON concert(last_starts_at);   -- 목록 기본 조건 '아직 남은 회차가 있는 공연'
 CREATE INDEX idx_concert_venue ON concert(venue_id, starts_at);
 CREATE INDEX idx_concert_genre ON concert(genre, starts_at);
+
+-- 회차 (11/27) — 좌석 재고 · 예매 · 입장 QR 시간 · 취소 마감은 회차 기준. 공연 정보 · 대기열 · 예매 오픈은 공연 기준
+CREATE TABLE concert_session (
+    id         BIGSERIAL   PRIMARY KEY,
+    concert_id BIGINT      NOT NULL REFERENCES concert(id),
+    starts_at  TIMESTAMPTZ NOT NULL,
+    CONSTRAINT uq_concert_session UNIQUE (concert_id, starts_at) DEFERRABLE INITIALLY DEFERRED
+    -- concert_id 로 시작 — 공연의 회차 조회도 이 인덱스로. 커밋 때 검사 — 관리자 회차 목록 교체(지우기 · 시각 바꾸기 · 더하기)를 한 번에 해도 순서에 걸리지 않게
+);
+CREATE INDEX idx_concert_session_starts ON concert_session(starts_at);   -- 검표 화면(지금 입장이 열린 회차) · 캘린더
 
 CREATE TABLE concert_artist (
     concert_id    BIGINT  NOT NULL REFERENCES concert(id),
@@ -112,6 +126,7 @@ CREATE TABLE booking (
     id              BIGSERIAL PRIMARY KEY,
     user_id         BIGINT      NOT NULL,                -- member.users (FK 없음)
     concert_id      BIGINT      NOT NULL REFERENCES concert(id),
+    session_id      BIGINT      NOT NULL REFERENCES concert_session(id),   -- 11/27 예매한 회차
     status          VARCHAR(16) NOT NULL,                -- PENDING | CONFIRMED | CANCELLED | EXPIRED (V2 ck_booking_status)
     total_price     INTEGER     NOT NULL CHECK (total_price > 0),   -- 담은 좌석 가격의 합
     pg_order_id     VARCHAR(64),                         -- NULL = 결제 준비 전
@@ -119,24 +134,29 @@ CREATE TABLE booking (
     paying_at       TIMESTAMPTZ,                         -- 결제 승인 시작
     checked_in_at   TIMESTAMPTZ,                         -- NULL = 아직 입장 전
     checked_in_by   BIGINT,                              -- member.admin_account (FK 없음)
+    withdrawn_at    TIMESTAMPTZ,                         -- 11/27 회원 탈퇴 — 정리(환불 · 만료)할 예매 표시. 정리가 끝나면 상태가 닫힘
     created_at      TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX idx_booking_user ON booking(user_id, id DESC);
 CREATE INDEX idx_booking_hold ON booking(hold_expires_at) WHERE status = 'PENDING';
--- ★ 1인 1예매 — 진행 중 · 확정 예매는 공연당 1건 (그 안에 좌석 최대 max_seats_per_user 개)
-CREATE UNIQUE INDEX uq_booking_active ON booking(concert_id, user_id) WHERE status IN ('PENDING', 'CONFIRMED');
+-- ★ 1인 1예매 — 진행 중 · 확정 예매는 회차당 1건 (그 안에 좌석 최대 max_seats_per_user 개 · 11/27 공연당 → 회차당)
+CREATE UNIQUE INDEX uq_booking_active ON booking(session_id, user_id) WHERE status IN ('PENDING', 'CONFIRMED');
+CREATE INDEX idx_booking_concert ON booking(concert_id, user_id) WHERE status IN ('PENDING', 'CONFIRMED');   -- 공지 알림 · 탈퇴 정리
+CREATE INDEX idx_booking_session ON booking(session_id);   -- 회차를 지워도 되나 (예매 기록이 있으면 못 지움)
+CREATE INDEX idx_booking_withdrawn ON booking(id) WHERE withdrawn_at IS NOT NULL AND status IN ('PENDING', 'CONFIRMED');   -- 탈퇴 정리 재시도
 
 -- ── 공연 좌석 (판매 상태) ───────────────────────────────────────
 CREATE TABLE concert_seat (
     id              BIGSERIAL PRIMARY KEY,
     concert_id      BIGINT      NOT NULL REFERENCES concert(id),
+    session_id      BIGINT      NOT NULL REFERENCES concert_session(id),   -- 11/27 회차마다 좌석 한 벌
     seat_id         BIGINT      NOT NULL REFERENCES seat(id),
     price           INTEGER     NOT NULL CHECK (price > 0),
     status          VARCHAR(16) NOT NULL,                -- AVAILABLE | HELD | PAYING | SOLD (V2 ck_concert_seat_status)
     held_by         BIGINT,                              -- member.users (FK 없음)
     hold_expires_at TIMESTAMPTZ,
     booking_id      BIGINT REFERENCES booking(id),       -- 지금 이 좌석을 쥔 예매 (취소 · 다음 사람 선점 때 바뀜)
-    CONSTRAINT uq_concert_seat UNIQUE (concert_id, seat_id)   -- concert_id 로 시작 — 좌석 화면 조회도 이 인덱스로
+    CONSTRAINT uq_concert_seat UNIQUE (concert_id, session_id, seat_id)   -- concert_id 로 시작 — 공연 전체 · 회차 좌석 화면 조회도 이 인덱스로
 );
 CREATE INDEX idx_concert_seat_seat ON concert_seat(seat_id);   -- 배치를 쓰는 공연 좌석 확인(409) · seat FK 검사
 CREATE INDEX idx_concert_seat_holder ON concert_seat(concert_id, held_by) WHERE status = 'HELD';
