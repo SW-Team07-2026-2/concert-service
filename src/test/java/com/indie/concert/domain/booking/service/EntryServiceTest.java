@@ -36,8 +36,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 11/27 입장 시간은 예매한 회차 기준 [시작 − 60분, 시작 + 30분) — QR 발급 · 검표 모두.
- * 입장 QR 은 결제된 내 예매 · 탈퇴 정리 전에만, 검표는 같은 공연 · 한 번만 · 순서는 INVALID → WRONG_CONCERT → 시간 → 만료
+ * 입장 시간은 예매한 회차 기준 [시작 - 60분, 시작 + 30분) - QR 발급, 검표 모두.
+ * 입장 QR 은 결제된 내 예매, 탈퇴 정리 전에만, 검표는 같은 공연, 한 번만, 순서는 INVALID -> WRONG_CONCERT -> 시간 -> 만료
  */
 class EntryServiceTest {
 
@@ -74,7 +74,7 @@ class EntryServiceTest {
                 });
     }
 
-    /** 입장 마감 = 회차 시작 30분 뒤 (공연 끝이 아님) — 그 시각부터 막힘 */
+    /** 입장 마감 = 회차 시작 30분 뒤 (공연 끝이 아님) - 그 시각부터 막힘 */
     @Test
     void closes30MinutesAfterSessionStart() {
         paid(NOW_AT.minusMinutes(30));
@@ -110,7 +110,7 @@ class EntryServiceTest {
         when(bookings.findByIdAndUserId(30L, 3L)).thenReturn(Optional.of(used));
         assertCode(() -> service.issue(3L, 30L), "ALREADY_CHECKED_IN");
 
-        assertCode(() -> service.issue(4L, 31L), "NOT_FOUND");   // 남의 예매 · 없는 예매
+        assertCode(() -> service.issue(4L, 31L), "NOT_FOUND");   // 남의 예매, 없는 예매
     }
 
     @Test
@@ -134,7 +134,7 @@ class EntryServiceTest {
         assertThat(result.checkedInAt()).isEqualTo(NOW_AT);
     }
 
-    /** ★ 같은 QR 을 두 번 — 두 번째는 409 · 언제 입장했는지 같이 */
+    /** 같은 QR 을 두 번 - 두 번째는 409, 언제 입장했는지 같이 */
     @Test
     void secondScanIsRejected() {
         BookingEntity used = scanned(BookingEntity.Status.CONFIRMED, NOW_AT.minusSeconds(10), NOW_AT.minusMinutes(10));
@@ -163,7 +163,7 @@ class EntryServiceTest {
         verify(bookings, never()).checkIn(anyLong(), anyLong(), any());
     }
 
-    /** 11/27 검표도 입장 시간에만 — 열리기 전 · 마감 뒤에는 새 QR 이어도 기록하지 않음 */
+    /** 검표도 입장 시간에만 - 열리기 전, 마감 뒤에는 새 QR 이어도 기록하지 않음 */
     @Test
     void checkInOutsideEntryWindowIsRejected() {
         scanned(BookingEntity.Status.CONFIRMED, null, NOW_AT.plusMinutes(61));
@@ -175,7 +175,7 @@ class EntryServiceTest {
         verify(bookings, never()).checkIn(anyLong(), anyLong(), any());
     }
 
-    /** ★ 캡처본 — 31초 전 QR (입장 시간 안) */
+    /** 캡처본 - 31초 전 QR (입장 시간 안) */
     @Test
     void screenshotIsRejectedWithoutRecording() {
         scanned(BookingEntity.Status.CONFIRMED, null, NOW_AT.minusMinutes(10));
@@ -185,7 +185,7 @@ class EntryServiceTest {
         verify(bookings, never()).checkIn(anyLong(), anyLong(), any());
     }
 
-    /** 검표 화면 — 입장이 열린 회차가 있는 공연마다 한 줄 (같은 공연의 회차 둘이 열려 있으면 먼저 시작하는 회차) */
+    /** 검표 화면 - 입장이 열린 회차가 있는 공연마다 한 줄 (같은 공연의 회차 둘이 열려 있으면 먼저 시작하는 회차) */
     @Test
     void openConcertsListsOneRowPerConcert() {
         ConcertSessionEntity first = session(501L, 42L, NOW_AT.plusMinutes(20));

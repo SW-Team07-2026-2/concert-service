@@ -69,9 +69,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 /**
- * 좌석 선점 (11/04 77A) 완료 기준 — 실제 PostgreSQL(Flyway · DB now()) + 실제 Redis(입장 토큰 TTL) 위에서 BookingService 를 그대로 돌립니다.
- * Payment 만 가짜입니다 (승인 호출 횟수 = 토스 호출 횟수 — Payment 는 승인 요청을 받아야만 토스를 부릅니다). Docker 가 없으면 건너뜁니다.
- * ③ [A,B] vs [B,C] — 1인 N매에서 겹치는 좌석을 동시에 골라도 한 명만 전부 잡고, 진 쪽은 하나도 남지 않습니다 (교착 없음).
+ * 좌석 선점 (77A) 완료 기준 - 실제 PostgreSQL(Flyway, DB now()) + 실제 Redis(입장 토큰 TTL) 위에서 BookingService 를 그대로 돌립니다.
+ * Payment 만 가짜입니다 (승인 호출 횟수 = 토스 호출 횟수 - Payment 는 승인 요청을 받아야만 토스를 부릅니다). Docker 가 없으면 건너뜁니다.
+ * 3 [A,B] vs [B,C] - 1인 N매에서 겹치는 좌석을 동시에 골라도 한 명만 전부 잡고, 진 쪽은 하나도 남지 않습니다 (교착 없음).
  */
 @Testcontainers(disabledWithoutDocker = true)
 @DataJpaTest(properties = "spring.jpa.hibernate.ddl-auto=validate")
@@ -136,7 +136,7 @@ class SeatHoldFlowTest {
                 payment, mock(BookingEvents.class), new EntryWindow(PROPS), tx, PROPS, Clock.systemUTC());
     }
 
-    /** ① 100명이 같은 좌석을 동시에 → 선점 1명 · 99명 409 SEAT_TAKEN (락 없이 조건부 UPDATE 만으로) */
+    /** 1 100명이 같은 좌석을 동시에 -> 선점 1명, 99명 409 SEAT_TAKEN (락 없이 조건부 UPDATE 만으로) */
     @Test
     void hundredUsersOnOneSeatHaveOneHold() throws Exception {
         long concertId = concert("flow-race");
@@ -154,10 +154,10 @@ class SeatHoldFlowTest {
         assertThat(outcomes).containsOnly(Map.entry("HELD", 1L), Map.entry("SEAT_TAKEN", 99L));
         assertThat(seatStatus(seatId)).isEqualTo("HELD");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM booking WHERE concert_id = ?", Long.class, concertId))
-                .isEqualTo(1);   // 진 99명의 예매는 롤백 — 남지 않음
+                .isEqualTo(1);   // 진 99명의 예매는 롤백 - 남지 않음
     }
 
-    /** ② 같은 사람이 같은 좌석을 동시에 두 번 → 선점 하나 · 두 응답의 holdId(bookingId) · 주문번호 · 마감이 같음 */
+    /** 2 같은 사람이 같은 좌석을 동시에 두 번 -> 선점 하나, 두 응답의 holdId(bookingId), 주문번호, 마감이 같음 */
     @Test
     void sameUserSameSeatTwiceGetsOneHold() throws Exception {
         long concertId = concert("flow-twice");
@@ -177,7 +177,7 @@ class SeatHoldFlowTest {
                 .isEqualTo(5);
     }
 
-    /** ③ 1인 N매 — [A,B] 와 [B,C] 를 동시에 고르면 한 명만 두 좌석을 다 잡고, 진 쪽은 A 나 C 도 남지 않음 (id 순서로 잡아 교착 없음) */
+    /** 3 1인 N매 - [A,B] 와 [B,C] 를 동시에 고르면 한 명만 두 좌석을 다 잡고, 진 쪽은 A 나 C 도 남지 않음 (id 순서로 잡아 교착 없음) */
     @Test
     void overlappingSeatSetsHaveOneWinner() throws Exception {
         long concertId = concert("flow-overlap");
@@ -200,7 +200,7 @@ class SeatHoldFlowTest {
         }
     }
 
-    /** 1인 N매 결제 — 금액은 좌석 가격의 합 · 승인되면 좌석 전부 SOLD */
+    /** 1인 N매 결제 - 금액은 좌석 가격의 합, 승인되면 좌석 전부 SOLD */
     @Test
     void multiSeatBookingSellsAllSeats() {
         long concertId = concert("flow-multi");
@@ -215,7 +215,7 @@ class SeatHoldFlowTest {
         assertThat(service.get(71L, held.bookingId()).seats()).extracting(s -> s.floor() + "-" + s.section()).containsOnly("1F-A");
     }
 
-    /** 1인 N매 한도 — 공연의 max_seats_per_user(4)를 넘으면 409 · 예매가 남지 않음 */
+    /** 1인 N매 한도 - 공연의 max_seats_per_user(4)를 넘으면 409, 예매가 남지 않음 */
     @Test
     void seatLimitIsPerConcert() {
         long concertId = concert("flow-limit");
@@ -225,7 +225,7 @@ class SeatHoldFlowTest {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM booking WHERE concert_id = ?", Long.class, concertId)).isZero();
     }
 
-    /** ④ 마감이 지난 HELD 는 정리(30초)를 기다리지 않고 바로 다음 사람이 선점 — 늦게 돈 정리가 돌아도 새 선점은 그대로 */
+    /** 4 마감이 지난 HELD 는 정리(30초)를 기다리지 않고 바로 다음 사람이 선점 - 늦게 돈 정리가 돌아도 새 선점은 그대로 */
     @Test
     void expiredHoldIsTakenBeforeCleanup() {
         long concertId = concert("flow-expired");
@@ -247,7 +247,7 @@ class SeatHoldFlowTest {
         assertThat(seatBooking(seatId)).isEqualTo(next.bookingId());
     }
 
-    /** ⑤ 마감 1초 전 결제 → PAYING — 승인 중에 마감이 지나도 남이 못 가져가고 정리도 건드리지 않음 → SOLD */
+    /** 5 마감 1초 전 결제 -> PAYING - 승인 중에 마감이 지나도 남이 못 가져가고 정리도 건드리지 않음 -> SOLD */
     @Test
     void payingSeatSurvivesDeadline() {
         long concertId = concert("flow-paying");
@@ -274,7 +274,7 @@ class SeatHoldFlowTest {
         assertThat(bookingStatus(held.bookingId())).isEqualTo("CONFIRMED");
     }
 
-    /** ⑥ 마감 1초 뒤 결제 → 410 HOLD_EXPIRED · 승인(토스) 호출 0회 */
+    /** 6 마감 1초 뒤 결제 -> 410 HOLD_EXPIRED, 승인(토스) 호출 0회 */
     @Test
     void payAfterDeadlineNeverReachesToss() {
         long concertId = concert("flow-late");
@@ -288,11 +288,11 @@ class SeatHoldFlowTest {
                     assertThat(e.getErrorCode().getStatus()).isEqualTo(HttpStatus.GONE);
                 });
         assertThat(payment.confirms).hasValue(0);
-        assertThat(seatStatus(seatId)).isEqualTo("HELD");   // PAYING 으로 바뀌지 않음 — 다음 사람이 바로 선점 가능
-        assertThat(paying(held.bookingId())).isFalse();      // 먼저 찍은 paying_at 도 롤백 — 남으면 정리가 이 선점을 못 찾음
+        assertThat(seatStatus(seatId)).isEqualTo("HELD");   // PAYING 으로 바뀌지 않음 - 다음 사람이 바로 선점 가능
+        assertThat(paying(held.bookingId())).isFalse();      // 먼저 찍은 paying_at 도 롤백 - 남으면 정리가 이 선점을 못 찾음
     }
 
-    /** ⑥-2 같은 예매의 결제 승인을 동시에 두 번 → 승인 1번 · 뒤 요청은 409 SEAT_LOCKED (410 이 아님 — 11/10) */
+    /** 6-2 같은 예매의 결제 승인을 동시에 두 번 -> 승인 1번, 뒤 요청은 409 SEAT_LOCKED (410 이 아님 - ) */
     @Test
     void doublePayIsSeatLockedNotExpired() throws Exception {
         long concertId = concert("flow-double");
@@ -315,7 +315,7 @@ class SeatHoldFlowTest {
         assertThat(seatStatus(seatId)).isEqualTo("SOLD");
     }
 
-    /** ⑦ 승인 응답 없음(타임아웃) → PAYING 유지 · 503 → 1분 뒤 정리가 Payment 결과대로 SOLD 또는 AVAILABLE */
+    /** 7 승인 응답 없음(타임아웃) -> PAYING 유지, 503 -> 1분 뒤 정리가 Payment 결과대로 SOLD 또는 AVAILABLE */
     @Test
     void unknownPaymentIsSettledByCleanup() {
         long concertId = concert("flow-timeout");
@@ -339,7 +339,7 @@ class SeatHoldFlowTest {
         assertThat(seatStatus(seatPaid)).isEqualTo("PAYING");
         assertThat(tryHold(concertId, 43L, admit(concertId, 43L, 60_000), seatPaid)).isEqualTo("SEAT_TAKEN");
 
-        service.expirePending(50);                                                         // 1분 전 — 그대로
+        service.expirePending(50);                                                         // 1분 전 - 그대로
         assertThat(payment.cancelled).doesNotContain(paid.bookingId(), lost.bookingId());
         assertThat(seatStatus(seatPaid)).isEqualTo("PAYING");
 
@@ -353,7 +353,7 @@ class SeatHoldFlowTest {
         assertThat(seatStatus(seatLost)).isEqualTo("AVAILABLE");
     }
 
-    /** ⑧ 입장 토큰 만료 1초 전 선점 → 성공 · 화면 시계는 이어서 곧 끝나고, 토큰이 끝나도 유예(약 3분) 안이면 결제 가능 (N16 은 토큰을 보지 않음) */
+    /** 8 입장 토큰 만료 1초 전 선점 -> 성공, 화면 시계는 이어서 곧 끝나고, 토큰이 끝나도 유예(약 3분) 안이면 결제 가능 (N16 은 토큰을 보지 않음) */
     @Test
     void holdJustBeforeTokenExpiryCanStillPay() throws Exception {
         long concertId = concert("flow-token-edge");
@@ -371,7 +371,7 @@ class SeatHoldFlowTest {
         assertThat(seatStatus(seatId)).isEqualTo("SOLD");
     }
 
-    /** ⑨ 입장 토큰 만료 뒤 선점 → 403 QUEUE_NOT_ADMITTED · 좌석 · 예매 그대로 */
+    /** 9 입장 토큰 만료 뒤 선점 -> 403 QUEUE_NOT_ADMITTED, 좌석, 예매 그대로 */
     @Test
     void holdAfterTokenExpiryIsForbidden() throws Exception {
         long concertId = concert("flow-token-gone");
@@ -388,7 +388,7 @@ class SeatHoldFlowTest {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM booking WHERE concert_id = ?", Long.class, concertId)).isZero();
     }
 
-    /** 승인 호출 횟수 · 정리가 물어본 예매를 셉니다. prepare 는 Payment 처럼 같은 예매면 같은 주문번호 */
+    /** 승인 호출 횟수, 정리가 물어본 예매를 셉니다. prepare 는 Payment 처럼 같은 예매면 같은 주문번호 */
     static class FakePayment implements PaymentClient {
         final AtomicInteger confirms = new AtomicInteger();
         final Set<Long> cancelled = ConcurrentHashMap.newKeySet();
@@ -455,7 +455,7 @@ class SeatHoldFlowTest {
         }
     }
 
-    /** 대기열 입장 — 실제 Redis 에 입장 토큰 (ttlMs 뒤 만료) */
+    /** 대기열 입장 - 실제 Redis 에 입장 토큰 (ttlMs 뒤 만료) */
     private String admit(long concertId, long userId, long ttlMs) {
         String token = UUID.randomUUID().toString();
         queueStore.restoreEntries(concertId, List.of(new QueueStore.EntryGrant(userId, token, ttlMs)));
@@ -467,7 +467,7 @@ class SeatHoldFlowTest {
         assertThat(queueStore.entry(concertId, userId)).isEmpty();
     }
 
-    /** 선점 서버 마감을 DB now() 기준으로 옮김 (예매 · 좌석 둘 다) — 예: "-1 second" = 1초 전에 지남 */
+    /** 선점 서버 마감을 DB now() 기준으로 옮김 (예매, 좌석 둘 다) - 예: "-1 second" = 1초 전에 지남 */
     private void deadline(long bookingId, String fromNow) {
         jdbc.update("UPDATE booking SET hold_expires_at = now() + ?::interval WHERE id = ?", fromNow, bookingId);
         jdbc.update("UPDATE concert_seat SET hold_expires_at = now() + ?::interval WHERE booking_id = ?", fromNow, bookingId);
@@ -489,7 +489,7 @@ class SeatHoldFlowTest {
         return jdbc.queryForObject("SELECT status FROM booking WHERE id = ?", String.class, bookingId);
     }
 
-    /** 대기열을 켠 · 판매 중인 공연 (1인 4매) · 회차 하나 */
+    /** 대기열을 켠, 판매 중인 공연 (1인 4매), 회차 하나 */
     private long concert(String title) {
         long concertId = jdbc.queryForObject("""
                 INSERT INTO concert (venue_id, title, type, starts_at, last_starts_at, booking_open_at, queue_enabled, max_seats_per_user, updated_at)
@@ -500,7 +500,7 @@ class SeatHoldFlowTest {
         return concertId;
     }
 
-    /** 이 공연의 판매 좌석 하나 (55,000원) — 공연장 배치에 좌석을 하나 만들고 그 좌석을 팝니다 */
+    /** 이 공연의 판매 좌석 하나 (55,000원) - 공연장 배치에 좌석을 하나 만들고 그 좌석을 팝니다 */
     private long seat(long concertId) {
         Long seatId = jdbc.queryForObject("""
                 INSERT INTO seat (section_id, row_no, seat_no, x, y, angle) VALUES (?, 1, ?, 0.5, 0.5, 0) RETURNING id

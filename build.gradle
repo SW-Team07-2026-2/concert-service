@@ -15,18 +15,18 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
-    implementation 'org.springframework.boot:spring-boot-starter-data-redis'   // 대기열 Redis(noeviction) · 캐시용 Redis(락 · 좌석 캐시)
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'   // 대기열 Redis(noeviction), 캐시용 Redis(락, 좌석 캐시)
     implementation 'org.springframework.kafka:spring-kafka'
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'
     runtimeOnly 'org.postgresql:postgresql'
 
-    implementation 'com.nimbusds:nimbus-jose-jwt:9.40'      // 내부토큰 검증 · Payment 호출용 발급
+    implementation 'com.nimbusds:nimbus-jose-jwt:9.40'      // 내부토큰 검증, Payment 호출용 발급
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
     implementation 'net.logstash.logback:logstash-logback-encoder:7.4'
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0'
-    implementation 'com.github.ben-manes.caffeine:caffeine'   // 11/25 Pod 메모리 캐시 (공연 · 남은 좌석 수 3초) — 버전은 Spring Boot 가 관리
+    implementation 'com.github.ben-manes.caffeine:caffeine'   // Pod 메모리 캐시 (공연, 남은 좌석 수 3초) - 버전은 Spring Boot 가 관리
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.testcontainers:postgresql:1.20.3'
@@ -36,6 +36,6 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
-    // Docker 29 는 API 1.44 미만을 거부합니다 — Testcontainers(docker-java) 기본값이 더 낮아 컨테이너를 못 띄웁니다
+    // Docker 29 는 API 1.44 미만을 거부합니다 - Testcontainers(docker-java) 기본값이 더 낮아 컨테이너를 못 띄웁니다
     systemProperty 'api.version', '1.44'
 }

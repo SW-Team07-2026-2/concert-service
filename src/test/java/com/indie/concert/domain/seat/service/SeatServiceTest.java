@@ -39,7 +39,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 좌석 화면 — 배치 · 상태는 캐시, 타이머(입장 토큰 남은 시간)는 요청마다 계산해 캐시에 섞이지 않습니다 */
+/** 좌석 화면 - 배치, 상태는 캐시, 타이머(입장 토큰 남은 시간)는 요청마다 계산해 캐시에 섞이지 않습니다 */
 class SeatServiceTest {
 
     private static final Instant NOW = Instant.parse("2026-11-13T10:00:00Z");
@@ -65,7 +65,7 @@ class SeatServiceTest {
                     List.of(new SeatView(1000L, 1, 1, new BigDecimal("0.15"), new BigDecimal("0.2"), BigDecimal.ZERO, 55000, "AVAILABLE"),
                             new SeatView(1001L, 1, 2, new BigDecimal("0.16"), new BigDecimal("0.2"), BigDecimal.ZERO, 55000, "SOLD")))))));
 
-    /** 입장 토큰 남은 초를 그대로 — 프론트는 expiresIn 으로 타이머를 돌립니다. 응답은 예전(Jackson 이 withTimer 를 직렬화)과 같은 JSON */
+    /** 입장 토큰 남은 초를 그대로 - 프론트는 expiresIn 으로 타이머를 돌립니다. 응답은 예전(Jackson 이 withTimer 를 직렬화)과 같은 JSON */
     @Test
     void entryTokenGivesTimerAtCallTime() throws Exception {
         when(cache.get(1L)).thenReturn(Optional.of(CACHED));
@@ -76,11 +76,11 @@ class SeatServiceTest {
 
         assertThat(body).isEqualTo(JSON.readTree(JSON.writeValueAsBytes(ApiResponse.onSuccess(CACHED.withTimer(expiresAt, 301)))));
         assertThat(body.at("/result/expiresIn").asLong()).isEqualTo(301L);
-        assertThat(CACHED.expiresIn()).isNull();   // 캐시 값에는 타이머가 없음 — 남의 타이머가 섞이지 않게
+        assertThat(CACHED.expiresIn()).isNull();   // 캐시 값에는 타이머가 없음 - 남의 타이머가 섞이지 않게
         verify(cache, never()).put(any());
     }
 
-    /** 대기열을 끈 공연 — 토큰 없이 배치만 (타이머 없음) */
+    /** 대기열을 끈 공연 - 토큰 없이 배치만 (타이머 없음) */
     @Test
     void noTokenNoTimer() throws Exception {
         when(cache.get(1L)).thenReturn(Optional.of(CACHED));
@@ -92,7 +92,7 @@ class SeatServiceTest {
         verify(queue, never()).entryLeft(anyLong(), anyLong(), anyString());
     }
 
-    /** ✏️ 11/25 본문은 Pod 메모리에 1초 — 여러 사람이 불러도 한 번만 만들고, 타이머는 사람마다 따로 */
+    /** 본문은 Pod 메모리에 1초 - 여러 사람이 불러도 한 번만 만들고, 타이머는 사람마다 따로 */
     @Test
     void bodyIsBuiltOnceAndTimersStayPerUser() throws Exception {
         when(cache.get(1L)).thenReturn(Optional.of(CACHED));
@@ -110,7 +110,7 @@ class SeatServiceTest {
         verify(cache, times(1)).get(1L);
     }
 
-    /** 입장 시간이 지났으면 배치도 주지 않고 대기열 에러 — 프론트는 대기열로 돌아갑니다 */
+    /** 입장 시간이 지났으면 배치도 주지 않고 대기열 에러 - 프론트는 대기열로 돌아갑니다 */
     @Test
     void expiredTokenIsRejectedBeforeMap() {
         when(queue.entryLeft(1L, 3L, "old")).thenThrow(new GeneralException(QueueErrorCode.QUEUE_NOT_ADMITTED));
@@ -120,7 +120,7 @@ class SeatServiceTest {
         verify(cache, never()).get(anyLong());
     }
 
-    /** 캐시가 비면 층 → 구역(모양) → 좌석으로 묶어 저장 · 파는 좌석이 없는 구역도 모양은 보냄 · available 은 SOLD 제외 */
+    /** 캐시가 비면 층 -> 구역(모양) -> 좌석으로 묶어 저장, 파는 좌석이 없는 구역도 모양은 보냄, available 은 SOLD 제외 */
     @Test
     void mapGroupsSeatsByFloorAndSection() {
         ConcertEntity concert = mock(ConcertEntity.class);
@@ -147,7 +147,7 @@ class SeatServiceTest {
         verify(cache).put(map);
     }
 
-    /** 11/27 회차가 둘 이상이면 sessionId 필수 · 다른 공연 회차는 404 · 캐시는 회차마다 */
+    /** 회차가 둘 이상이면 sessionId 필수, 다른 공연 회차는 404, 캐시는 회차마다 */
     @Test
     void multiSessionConcertNeedsSessionId() throws Exception {
         List<ConcertSessionEntity> two = List.of(session(21L), session(22L));
