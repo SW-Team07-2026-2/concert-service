@@ -80,8 +80,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.groups.Tuple.tuple;
 
 /**
- * 스키마 검증 — Flyway(V1 구조 · V2 값)로 스키마를 만들고 ddl-auto: validate 로 엔티티와 대조합니다 (어긋나면 컨텍스트 기동 실패).
- * 1인 1예매 · 검표처럼 DB 가 최종 보장하는 규칙도 실제 PostgreSQL 에서 확인합니다 (좌석 선점 흐름은 SeatHoldFlowTest). Docker 가 없으면 건너뜁니다.
+ * 스키마 검증 - Flyway(V1 구조, V2 값)로 스키마를 만들고 ddl-auto: validate 로 엔티티와 대조합니다 (어긋나면 컨텍스트 기동 실패).
+ * 1인 1예매, 검표처럼 DB 가 최종 보장하는 규칙도 실제 PostgreSQL 에서 확인합니다 (좌석 선점 흐름은 SeatHoldFlowTest). Docker 가 없으면 건너뜁니다.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @DataJpaTest(properties = "spring.jpa.hibernate.ddl-auto=validate")
@@ -127,7 +127,7 @@ class ConcertSchemaTest {
     @Autowired TransactionTemplate tx;
     @Autowired OutboxAppender outbox;
 
-    /** 선점 저장 — 좌석의 마감은 예매의 서버 마감(DB now() + 9분)을 그대로 씁니다 */
+    /** 선점 저장 - 좌석의 마감은 예매의 서버 마감(DB now() + 9분)을 그대로 씁니다 */
     @Test
     void holdCopiesServerDeadlineToSeat() {
         long concertId = concert("hold");
@@ -141,7 +141,7 @@ class ConcertSchemaTest {
                 """, Boolean.class, bookingId)).isTrue();
     }
 
-    /** 정리 대상 — 서버 마감이 지난 선점(결제 중 제외) · 승인 응답 없이 1분이 지난 결제 중 (81A) */
+    /** 정리 대상 - 서버 마감이 지난 선점(결제 중 제외), 승인 응답 없이 1분이 지난 결제 중 (81A) */
     @Test
     void expiredHoldsAndStalePayingAreFound() {
         long concertId = concert("expiry");
@@ -160,7 +160,7 @@ class ConcertSchemaTest {
         assertThat(bookingRepository.findStalePaying(60, 50)).contains(stale).doesNotContain(open, ended, paying);
     }
 
-    /** ★ 1인 1예매의 최종 방어 — 같은 회차에 진행 중 · 확정 예매는 하나 (uq_booking_active · Flyway 에만 있음 · 11/27 공연당 → 회차당) */
+    /** 1인 1예매의 최종 방어 - 같은 회차에 진행 중, 확정 예매는 하나 (uq_booking_active, Flyway 에만 있음, 공연당 -> 회차당) */
     @Test
     void oneActiveBookingPerUserPerSession() {
         long concertId = concert("once");
@@ -176,7 +176,7 @@ class ConcertSchemaTest {
         assertThat(book(5L, concertId, now)).isPositive();
     }
 
-    /** ★ 같은 QR 을 검표 다섯 대가 동시에 찍어도 입장 기록은 한 번 · 결제 전 예매는 입장 불가 (checked_in_at 조건부 UPDATE · V6) */
+    /** 같은 QR 을 검표 다섯 대가 동시에 찍어도 입장 기록은 한 번, 결제 전 예매는 입장 불가 (checked_in_at 조건부 UPDATE, V6) */
     @Test
     void checkInIsRecordedOnce() throws Exception {
         long concertId = concert("check-in");
@@ -202,8 +202,8 @@ class ConcertSchemaTest {
     }
 
     /**
-     * 11/27 탈퇴 — 입장한 예매는 표시하지 않고, 표시된 예매는 입장 불가 (같은 행 조건부 UPDATE 라 둘 중 하나만).
-     * 환불 없는 만료(forfeit)는 표시된 확정 · 입장 전만 · 재시도 목록은 아직 닫히지 않은 표시 예매
+     * 탈퇴 - 입장한 예매는 표시하지 않고, 표시된 예매는 입장 불가 (같은 행 조건부 UPDATE 라 둘 중 하나만).
+     * 환불 없는 만료(forfeit)는 표시된 확정, 입장 전만, 재시도 목록은 아직 닫히지 않은 표시 예매
      */
     @Test
     void withdrawalAndCheckInExcludeEachOther() {
@@ -234,7 +234,7 @@ class ConcertSchemaTest {
         assertThat((int) tx.execute(s -> bookingRepository.markWithdrawn(21L, now))).isZero();   // 다시 와도 그대로
     }
 
-    /** 스냅샷 upsert 는 seq 가 같으면 입장 · 이탈 기록을 WAITING 으로 되돌리지 않고, 재진입(더 큰 seq)이면 되살립니다 */
+    /** 스냅샷 upsert 는 seq 가 같으면 입장, 이탈 기록을 WAITING 으로 되돌리지 않고, 재진입(더 큰 seq)이면 되살립니다 */
     @Test
     void queueSnapshotNeverRewindsAdmission() {
         long concertId = concert("queue");
@@ -246,12 +246,12 @@ class ConcertSchemaTest {
         assertThat(queueEntries.findWaitingAfter(concertId, 0, 10)).extracting(QueueMember::userId).containsExactly(2L, 3L);
         assertThat(queueEntries.countWaitingBefore(concertId, 3)).isEqualTo(1);
 
-        queueEntries.upsertWaiting(concertId, List.of(new QueueMember(1, 9)));            // 다시 줄 섬 → 맨 뒤
+        queueEntries.upsertWaiting(concertId, List.of(new QueueMember(1, 9)));            // 다시 줄 섬 -> 맨 뒤
         assertThat(queueEntries.findWaitingAfter(concertId, 0, 10)).extracting(QueueMember::userId).containsExactly(2L, 3L, 1L);
         assertThat(queueEntries.maxSeq(concertId)).isEqualTo(9);
     }
 
-    /** 입장 토큰은 DB 에도 남고(Redis 복구 원천), 이탈하면 지워집니다 · 10분이 지난 입장은 복구 대상이 아닙니다 */
+    /** 입장 토큰은 DB 에도 남고(Redis 복구 원천), 이탈하면 지워집니다, 10분이 지난 입장은 복구 대상이 아닙니다 */
     @Test
     void admittedEntryTokenIsKeptForRestore() {
         long concertId = concert("entry");
@@ -284,8 +284,8 @@ class ConcertSchemaTest {
     }
 
     /**
-     * 11/27 검표 화면 — 입장이 열린 회차: 시작 ≤ 지금 + 60분 · 시작 > 지금 − 30분 (공연 끝 시각은 보지 않음).
-     * 같은 공연에 같은 시각 회차 두 개는 커밋 때 거부 (uq_concert_session DEFERRABLE) · 마지막 회차가 첫 회차보다 앞이면 거부
+     * 검표 화면 - 입장이 열린 회차: 시작 <= 지금 + 60분, 시작 > 지금 - 30분 (공연 끝 시각은 보지 않음).
+     * 같은 공연에 같은 시각 회차 두 개는 커밋 때 거부 (uq_concert_session DEFERRABLE), 마지막 회차가 첫 회차보다 앞이면 거부
      */
     @Test
     void entryOpenSessionsFollowSessionStart() {
@@ -307,9 +307,9 @@ class ConcertSchemaTest {
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
-    // ── 공연장 배치 (관리자 무대 그리기) ───────────────────────────
+    // ── 공연장 배치 (관리자 무대 그리기)
 
-    /** 층 → 구역 → 좌석으로 저장 · 같은 구역을 다시 보내면 모양을 덮어쓰고 좌석을 새로 넣습니다 (층 · 구역 id 는 그대로) */
+    /** 층 -> 구역 -> 좌석으로 저장, 같은 구역을 다시 보내면 모양을 덮어쓰고 좌석을 새로 넣습니다 (층, 구역 id 는 그대로) */
     @Test
     void sectionLayoutIsSavedAndReplaced() {
         long venueId = venue("배치홀");
@@ -329,7 +329,7 @@ class ConcertSchemaTest {
                 BigDecimal.class, first.sectionId())).isEqualByComparingTo("0.23");
     }
 
-    /** 관리자 화면용 배치 조회 — 층 → 구역(모양) → 좌석(seat.id · 위치), 배치가 없는 공연장은 빈 목록 */
+    /** 관리자 화면용 배치 조회 - 층 -> 구역(모양) -> 좌석(seat.id, 위치), 배치가 없는 공연장은 빈 목록 */
     @Test
     void venueLayoutIsReadBack() {
         long venueId = venue("조회홀");
@@ -351,7 +351,7 @@ class ConcertSchemaTest {
         assertThatThrownBy(() -> layoutService.layout(999_999L)).isInstanceOf(GeneralException.class);
     }
 
-    /** 이 구역 좌석을 파는 공연이 있으면 409 — 모양 · 좌석 모두 그대로 (롤백) */
+    /** 이 구역 좌석을 파는 공연이 있으면 409 - 모양, 좌석 모두 그대로 (롤백) */
     @Test
     void sectionInUseCannotBeRedrawn() {
         long venueId = venue("판매중홀");
@@ -366,7 +366,7 @@ class ConcertSchemaTest {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM seat WHERE section_id = ?", Integer.class, saved.sectionId())).isEqualTo(2);
     }
 
-    /** 좌석 가격 — 다른 공연장 좌석은 세지 않고, 다시 보내면 빈 좌석만 가격이 바뀝니다 (선점 좌석은 그대로) */
+    /** 좌석 가격 - 다른 공연장 좌석은 세지 않고, 다시 보내면 빈 좌석만 가격이 바뀝니다 (선점 좌석은 그대로) */
     @Test
     void seatPricesUpsertOnlyAvailableSeats() {
         long venueId = venue("가격홀");
@@ -393,7 +393,7 @@ class ConcertSchemaTest {
                 .containsExactly(55000, 20000);
     }
 
-    /** 좌석 화면 — 마감이 지난 선점은 정리 전이라도 AVAILABLE (DB now() 기준) · 결제 중은 HELD */
+    /** 좌석 화면 - 마감이 지난 선점은 정리 전이라도 AVAILABLE (DB now() 기준), 결제 중은 HELD */
     @Test
     void seatMapStatusFollowsDbClock() {
         long concertId = concert("map");
@@ -410,9 +410,9 @@ class ConcertSchemaTest {
                 tuple(ended, "AVAILABLE"), tuple(paying, "HELD"));
     }
 
-    // ── 공연 · 라인업 (관리자 등록) ─────────────────────────────
+    // ── 공연, 라인업 (관리자 등록)
 
-    /** 페스티벌 등록 — 라인업 순서 그대로 · 장르는 관리자 값 · concert.created 에 artistIds */
+    /** 페스티벌 등록 - 라인업 순서 그대로, 장르는 관리자 값, concert.created 에 artistIds */
     @Test
     void festivalIsCreatedWithLineupAndEvent() throws Exception {
         long a1 = artist(101, "새소년", "INDIE_ROCK");
@@ -441,7 +441,7 @@ class ConcertSchemaTest {
                 .extracting(ConcertEntity::getId).contains(detail.id());
     }
 
-    /** 11/19 팔로우 탭 — 목록 조건 여러 개 · 검색어(제목 · 라인업 이름) · 진행 현황(지난 공연 포함) · ARTIST_ORDER · UPDATED */
+    /** 팔로우 탭 - 목록 조건 여러 개, 검색어(제목, 라인업 이름), 진행 현황(지난 공연 포함), ARTIST_ORDER, UPDATED */
     @Test
     void followTabListFiltersAndSorts() {
         long a = artist(201, "필터밴드가", "INDIE_ROCK");
@@ -462,12 +462,12 @@ class ConcertSchemaTest {
         assertThat(ids(null, List.of(Genre.INDIE_ROCK, Genre.FOLK), null, all, null, "필터 공연", null))
                 .containsExactly(closed, onSale, scheduled);                                                  // 둘(EMO)은 라인업 다(FOLK)로
         assertThat(ids(null, List.of(Genre.FOLK), null, all, null, "필터 공연", null)).containsExactly(closed, scheduled);
-        assertThat(ids(null, List.of(Genre.EMO), null, all, null, "필터 공연", null)).containsExactly(scheduled);   // 공연 장르 · 라인업 나(EMO)
+        assertThat(ids(null, List.of(Genre.EMO), null, all, null, "필터 공연", null)).containsExactly(scheduled);   // 공연 장르, 라인업 나(EMO)
         assertThat(ids(null, List.of(Genre.PUNK), null, all, null, "필터 공연", null)).isEmpty();
         assertThat(ids(null, null, List.of(ConcertEntity.Type.FESTIVAL), null, null, "필터 공연", null)).containsExactly(scheduled);
         assertThat(ids(null, null, null, all, null, "필터밴드나", null)).containsExactly(scheduled);              // 라인업 이름
 
-        // 넘긴 순서 — 라인업 중 가장 앞 자리 (둘 = 다(0) · 나(목록 밖)) · 같은 자리는 공연일 순
+        // 넘긴 순서 - 라인업 중 가장 앞 자리 (둘 = 다(0), 나(목록 밖)), 같은 자리는 공연일 순
         assertThat(ids(null, null, null, all, List.of(c, a), null, ListSort.ARTIST_ORDER)).containsExactly(closed, scheduled, onSale);
         assertThat(ids(null, null, null, null, List.of(a, b), null, ListSort.ARTIST_ORDER)).containsExactly(onSale, scheduled);
         assertThat(ids(null, null, null, all, List.of(a, b, c), null, ListSort.UPDATED)).containsExactly(onSale, scheduled, closed);
@@ -477,7 +477,7 @@ class ConcertSchemaTest {
         assertThatThrownBy(() -> ids(null, null, null, null, null, null, ListSort.ARTIST_ORDER)).isInstanceOf(GeneralException.class);
     }
 
-    /** 11/19 검색어에 공연장 이름 · 팔로우 탭(Member 대역) 정렬 3종 · 아티스트별 최근 공연 시각(Catalog 내부 호출) */
+    /** 검색어에 공연장 이름, 팔로우 탭(Member 대역) 정렬 3종, 아티스트별 최근 공연 시각(Catalog 내부 호출) */
     @Test
     void followingSearchAndArtistLatest() {
         long a = artist(301, "팔로우밴드가", "INDIE_ROCK");
@@ -489,7 +489,7 @@ class ConcertSchemaTest {
 
         assertThat(ids(null, null, null, null, null, "팔로우롤링", null)).containsExactly(one);   // 공연장 이름
 
-        // Member 는 최근 팔로우순(c, b, a) · 팔로워 a 9 > b 5 > c 1
+        // Member 는 최근 팔로우순(c, b, a), 팔로워 a 9 > b 5 > c 1
         OffsetDateTime t = OffsetDateTime.now();
         var follows = List.of(new MemberClient.FollowedArtist(c, t, 1), new MemberClient.FollowedArtist(b, t, 5),
                 new MemberClient.FollowedArtist(a, t, 9));
@@ -498,14 +498,14 @@ class ConcertSchemaTest {
             return userId == 7 ? follows : List.of();
         }, concertService, concertRepository);
         assertThat(followingIds(following, null, null)).containsExactly(three, two, one);                       // 최근 팔로우순 (라인업 중 가장 앞 자리)
-        assertThat(followingIds(following, null, FollowSort.FOLLOWERS)).containsExactly(one, two, three);     // a 가 둘 다 나옴 → 공연일 순
+        assertThat(followingIds(following, null, FollowSort.FOLLOWERS)).containsExactly(one, two, three);     // a 가 둘 다 나옴 -> 공연일 순
         assertThat(followingIds(following, null, FollowSort.UPDATED)).containsExactly(two, one, three);       // 공연 수정 최신순
         assertThat(following.concerts(7, "팔로우다른", null, null, List.of(ConcertEntity.Type.FESTIVAL), null, null, 0, 20).items())
                 .extracting(com.indie.concert.domain.concert.dto.response.ConcertSummary::id).containsExactly(two);
         assertThat(following.concerts(8, null, null, null, null, null, null, 0, 20).items()).isEmpty();
         assertThatThrownBy(() -> following.concerts(9, null, null, null, null, null, null, 0, 20)).isInstanceOf(GeneralException.class);
 
-        // 아티스트별 최근 공연 시각 — a 는 둘(-1h) · b 도 둘 · c 는 셋(-3h) · 공연 없는 아티스트는 빠짐
+        // 아티스트별 최근 공연 시각 - a 는 둘(-1h), b 도 둘, c 는 셋(-3h), 공연 없는 아티스트는 빠짐
         Map<Long, OffsetDateTime> latest = new java.util.HashMap<>();
         following.latestByArtist(List.of(a, b, c, 999L)).forEach(l -> latest.put(l.artistId(), l.latestAt()));
         assertThat(latest).containsOnlyKeys(a, b, c);
@@ -520,7 +520,7 @@ class ConcertSchemaTest {
                 .map(com.indie.concert.domain.concert.dto.response.ConcertSummary::id).toList();
     }
 
-    /** 라인업 수정 — 새로 들어온 아티스트만 concert.lineup_updated 의 addedArtistIds · 같은 목록 · 빼기만 하면 이벤트 없음 */
+    /** 라인업 수정 - 새로 들어온 아티스트만 concert.lineup_updated 의 addedArtistIds, 같은 목록, 빼기만 하면 이벤트 없음 */
     @Test
     void lineupUpdateAnnouncesOnlyAddedArtists() throws Exception {
         long a1 = artist(111, "검정치마", "INDIE_ROCK");
@@ -541,7 +541,7 @@ class ConcertSchemaTest {
         assertThat(admin.replaceLineup(id, List.of(a3, a2)).artists()).extracting(ArtistRef::id).containsExactly(a3, a2);
     }
 
-    /** 공연 변경 공지 — 새 공지만 concert.notice_posted (라인업 + 확정 예매자만) · 고치기 · 지우기는 알림 없음 · 최신순 */
+    /** 공연 변경 공지 - 새 공지만 concert.notice_posted (라인업 + 확정 예매자만), 고치기, 지우기는 알림 없음, 최신순 */
     @Test
     void noticesNotifyLineupFollowersAndConfirmedBookers() throws Exception {
         long a1 = artist(141, "혁오", "INDIE_ROCK");
@@ -572,7 +572,7 @@ class ConcertSchemaTest {
         assertThatThrownBy(() -> notices.update(id, first.id(), new NoticeUpdateRequest(null, "  ", null))).isInstanceOf(GeneralException.class);
     }
 
-    /** 단독 공연 장르 = 아티스트 장르 — artist.updated 로 같이 바뀌고 페스티벌은 그대로 · 옛 이벤트는 무시 */
+    /** 단독 공연 장르 = 아티스트 장르 - artist.updated 로 같이 바뀌고 페스티벌은 그대로, 옛 이벤트는 무시 */
     @Test
     void soloGenreFollowsArtist() {
         long a = artist(121, "새소년", "INDIE_ROCK");
@@ -591,12 +591,12 @@ class ConcertSchemaTest {
         assertThat(genre(solo.id())).isEqualTo("PSYCHEDELIC");
         assertThat(genre(fest)).isEqualTo("ALTERNATIVE");
 
-        artistService.apply(a, "새소년", "K_ROCK", OffsetDateTime.now().plusSeconds(1));   // Catalog 목록에 없는 값 — 복제는 계속, 장르 없음
+        artistService.apply(a, "새소년", "K_ROCK", OffsetDateTime.now().plusSeconds(1));   // Catalog 목록에 없는 값 - 복제는 계속, 장르 없음
         assertThat(jdbc.queryForObject("SELECT genre FROM artist WHERE id = ?", String.class, a)).isNull();
         assertThat(genre(solo.id())).isNull();
     }
 
-    /** 복제가 안 된 아티스트 · 같은 아티스트 두 번 · 단독 공연 2명은 400 */
+    /** 복제가 안 된 아티스트, 같은 아티스트 두 번, 단독 공연 2명은 400 */
     @Test
     void lineupMustBeKnownDistinctArtists() {
         long a = artist(131, "아도이", "INDIE_POP");
@@ -610,7 +610,7 @@ class ConcertSchemaTest {
                 .isInstanceOf(GeneralException.class);
     }
 
-    /** 마이그레이션은 V1(구조) · V2(값) 두 파일 */
+    /** 마이그레이션은 V1(구조), V2(값) 두 파일 */
     @Test
     void migrationsAreSchemaThenValues() {
         assertThat(jdbc.queryForList("SELECT version || ' ' || description FROM flyway_schema_history "
@@ -618,7 +618,7 @@ class ConcertSchemaTest {
                 .containsExactly("1 concert schema", "2 concert values");
     }
 
-    /** ★ V2 의 CHECK 값 목록 = Java enum — 한쪽만 고치면 여기서 깨집니다 (장르는 Catalog 의 Genre 와 같은 목록) */
+    /** V2 의 CHECK 값 목록 = Java enum - 한쪽만 고치면 여기서 깨집니다 (장르는 Catalog 의 Genre 와 같은 목록) */
     @Test
     void checkConstraintValuesMatchJavaEnums() {
         assertThat(checkValues("ck_artist_genre")).isEqualTo(names(Genre.values()));
@@ -644,7 +644,7 @@ class ConcertSchemaTest {
         return values;
     }
 
-    /** Postgres 는 FK 를 걸어도 참조하는 쪽 인덱스를 만들지 않습니다 — 직접 만든 것 확인 */
+    /** Postgres 는 FK 를 걸어도 참조하는 쪽 인덱스를 만들지 않습니다 - 직접 만든 것 확인 */
     @Test
     void foreignKeyLookupIndexesExist() {
         assertThat(jdbc.queryForList("""
@@ -653,7 +653,7 @@ class ConcertSchemaTest {
                 """, String.class)).hasSize(3);
     }
 
-    /** N10 의 저장 부분 — 예매 + 서버 마감(DB now() + 9분) + 좌석 선점 */
+    /** N10 의 저장 부분 - 예매 + 서버 마감(DB now() + 9분) + 좌석 선점 */
     private long hold(long userId, long concertId, long concertSeatId) {
         long sessionId = jdbc.queryForObject("SELECT session_id FROM concert_seat WHERE id = ?", Long.class, concertSeatId);
         Long id = tx.execute(s -> {
@@ -681,7 +681,7 @@ class ConcertSchemaTest {
         return jdbc.queryForObject("SELECT id FROM concert_session WHERE concert_id = ? ORDER BY starts_at LIMIT 1", Long.class, concertId);
     }
 
-    /** 회차를 하나 더 — 시작은 now() 기준 간격 · 공연의 첫 · 마지막 회차를 맞춥니다 */
+    /** 회차를 하나 더 - 시작은 now() 기준 간격, 공연의 첫, 마지막 회차를 맞춥니다 */
     private long addSession(long concertId, String fromNow) {
         long id = jdbc.queryForObject("INSERT INTO concert_session (concert_id, starts_at) VALUES (?, now() + CAST(? AS interval)) RETURNING id",
                 Long.class, concertId, fromNow);
@@ -713,8 +713,8 @@ class ConcertSchemaTest {
         return id;
     }
 
-    /** 공연장 배치에 좌석을 하나 만들고 이 공연에서 팝니다 — 반환은 concert_seat.id */
-    /** 공연 하나 + 라인업 — starts · opens · updated 는 now() 기준 간격 ("10 days", "-1 hour") */
+    /** 공연장 배치에 좌석을 하나 만들고 이 공연에서 팝니다 - 반환은 concert_seat.id */
+    /** 공연 하나 + 라인업 - starts, opens, updated 는 now() 기준 간격 ("10 days", "-1 hour") */
     private long listed(String title, long venueId, String type, String genre, String starts, String opens, String updated, long... lineup) {
         long id = jdbc.queryForObject("""
                 INSERT INTO concert (venue_id, title, type, genre, starts_at, last_starts_at, booking_open_at, max_seats_per_user, updated_at)
@@ -754,7 +754,7 @@ class ConcertSchemaTest {
 
     private static final AtomicInteger SECTION = new AtomicInteger();
 
-    /** rows × perRow 좌석 — x = 열/10 + 번호/100 (2열 3번 = 0.23) */
+    /** rows * perRow 좌석 - x = 열/10 + 번호/100 (2열 3번 = 0.23) */
     private static SectionLayoutRequest layout(long venueId, String floor, String section, double angle, int rows, int perRow) {
         List<SeatPoint> seats = new ArrayList<>();
         for (int r = 1; r <= rows; r++) {

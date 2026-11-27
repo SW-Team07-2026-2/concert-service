@@ -39,7 +39,7 @@ class InternalTokenFilterTest {
         return response;
     }
 
-    /** 11/19 아티스트별 최근 공연 시각 경로만 catalog 토큰 — 그 토큰으로 다른 내부 API 는 못 부르고, 관리자 토큰은 이 경로를 못 부름 */
+    /** 아티스트별 최근 공연 시각 경로만 catalog 토큰 - 그 토큰으로 다른 내부 API 는 못 부르고, 관리자 토큰은 이 경로를 못 부름 */
     @Test
     void newsPathAcceptsOnlyNewsIssuers() throws Exception {
         assertThat(call(token(SECRET, "catalog", "concert", 300), InternalTokenFilter.NEWS_PATH).getStatus()).isEqualTo(200);
@@ -69,7 +69,7 @@ class InternalTokenFilterTest {
         assertThat(call(token(SECRET, "studio", "payment", 300)).getStatus()).isEqualTo(401);
     }
 
-    /** 11/13 — 수집 경로를 없애 iss=gateway(수집) · ingest 토큰도 받지 않습니다. 공연은 관리자(studio)를 거쳐서만 */
+    /** - 수집 경로를 없애 iss=gateway(수집), ingest 토큰도 받지 않습니다. 공연은 관리자(studio)를 거쳐서만 */
     @Test
     void unknownIssuerIs401() throws Exception {
         assertThat(call(token(SECRET, "gateway", "concert", 300)).getStatus()).isEqualTo(401);

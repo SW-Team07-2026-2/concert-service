@@ -54,8 +54,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Saga 보상 순서 — 좌석을 푸는 모든 경로는 Payment 를 먼저 끝냅니다.
- * 좌석 선점 (11/04 77A) — 결제 승인은 내 선점을 PAYING 으로 바꾼 뒤에만. 동시성 · DB 시계는 SeatHoldFlowTest (실제 PostgreSQL)
+ * Saga 보상 순서 - 좌석을 푸는 모든 경로는 Payment 를 먼저 끝냅니다.
+ * 좌석 선점 (77A) - 결제 승인은 내 선점을 PAYING 으로 바꾼 뒤에만. 동시성, DB 시계는 SeatHoldFlowTest (실제 PostgreSQL)
  */
 class BookingServiceTest {
 
@@ -71,7 +71,7 @@ class BookingServiceTest {
     private final PaymentClient payment = mock(PaymentClient.class);
     private final QueueService queue = mock(QueueService.class);
     private final BookingEvents events = mock(BookingEvents.class);
-    /** 트랜잭션마다 새 상태 — 롤백 요청(setRollbackOnly)은 commit 에 넘어온 상태로 확인합니다 */
+    /** 트랜잭션마다 새 상태 - 롤백 요청(setRollbackOnly)은 commit 에 넘어온 상태로 확인합니다 */
     private final PlatformTransactionManager txManager = mock(PlatformTransactionManager.class);
     private static final ConcertProperties PROPS = new ConcertProperties(null, null, null, "Asia/Seoul",
             new ConcertProperties.Booking(7, 179, 60, 24, 30000), null, null, null, null, null, new ConcertProperties.Entry(30, 60, 30));
@@ -79,7 +79,7 @@ class BookingServiceTest {
             venues, mock(LineupReader.class), queue, payment, events, new EntryWindow(PROPS), new TransactionTemplate(txManager),
             PROPS, Clock.fixed(NOW, ZoneOffset.UTC));
 
-    /** 예매 · 좌석은 모두 회차 10 — 기본은 사흘 뒤 시작 (판매 중 · 취소 가능) */
+    /** 예매, 좌석은 모두 회차 10 - 기본은 사흘 뒤 시작 (판매 중, 취소 가능) */
     private static final long SESSION = 10L;
 
     {
@@ -89,7 +89,7 @@ class BookingServiceTest {
         sessionAt(NOW_AT.plusDays(3));
     }
 
-    /** 선점 마감이 지난 예매 — 결제부터 무효화하고 좌석을 풉니다 */
+    /** 선점 마감이 지난 예매 - 결제부터 무효화하고 좌석을 풉니다 */
     @Test
     void expiryCancelsPaymentBeforeReleasingSeat() {
         when(bookings.findExpiredHolds(50)).thenReturn(List.of(5L));
@@ -104,7 +104,7 @@ class BookingServiceTest {
         order.verify(seats).releaseBooking(5L);
     }
 
-    /** 정리 직전에 결제가 승인됐다면 확정합니다 (SOLD) — 좌석을 풀지 않음 */
+    /** 정리 직전에 결제가 승인됐다면 확정합니다 (SOLD) - 좌석을 풀지 않음 */
     @Test
     void expiryConfirmsBookingPaidInTheMeantime() {
         when(bookings.findExpiredHolds(50)).thenReturn(List.of(5L));
@@ -128,7 +128,7 @@ class BookingServiceTest {
         verify(seats, never()).releaseBooking(anyLong());
     }
 
-    /** 81A — 응답 없는 PAYING 은 1분 뒤 건마다 정리. 한 건이 토스 처리 중(503)이어도 다음 건은 진행 */
+    /** 81A - 응답 없는 PAYING 은 1분 뒤 건마다 정리. 한 건이 토스 처리 중(503)이어도 다음 건은 진행 */
     @Test
     void stalePayingIsSettledOneByOne() {
         when(bookings.findStalePaying(60, 50)).thenReturn(List.of(5L, 6L));
@@ -157,7 +157,7 @@ class BookingServiceTest {
         verify(payment, never()).cancel(anyLong(), anyString(), anyBoolean());
     }
 
-    /** 관리자 취소 대행 — 회원 본인 취소와 같은 규칙 (공연 24시간 전 마감) · 통과하면 사유만 ADMIN_CANCEL */
+    /** 관리자 취소 대행 - 회원 본인 취소와 같은 규칙 (공연 24시간 전 마감), 통과하면 사유만 ADMIN_CANCEL */
     @Test
     void adminCancelFollowsSameRules() {
         BookingEntity late = mock(BookingEntity.class);
@@ -182,7 +182,7 @@ class BookingServiceTest {
         assertThatThrownBy(() -> service.cancelByAdmin(404L)).isInstanceOf(GeneralException.class);
     }
 
-    /** 입장한 예매는 환불 없음 — 취소 마감을 줄이는 설정 변경에도 */
+    /** 입장한 예매는 환불 없음 - 취소 마감을 줄이는 설정 변경에도 */
     @Test
     void checkedInBookingIsNotCancellable() {
         BookingEntity booking = mock(BookingEntity.class);
@@ -196,7 +196,7 @@ class BookingServiceTest {
         verify(payment, never()).cancel(anyLong(), anyString(), anyBoolean());
     }
 
-    /** 결제 준비 실패 — 돈이 나갈 수 없으니 방금 잡은 선점을 풀고 503 */
+    /** 결제 준비 실패 - 돈이 나갈 수 없으니 방금 잡은 선점을 풀고 503 */
     @Test
     void prepareFailureReleasesHold() {
         selectable(77L);
@@ -212,7 +212,7 @@ class BookingServiceTest {
         order.verify(seats).releaseBooking(9L);
     }
 
-    /** 남이 선점한 좌석 — 바로 409 SEAT_TAKEN (결제창까지 가지 않음) */
+    /** 남이 선점한 좌석 - 바로 409 SEAT_TAKEN (결제창까지 가지 않음) */
     @Test
     void takenSeatIsRejectedAtOnce() {
         selectable(77L);
@@ -227,7 +227,7 @@ class BookingServiceTest {
         verify(payment, never()).prepare(anyLong(), anyLong(), anyInt());
     }
 
-    /** 내 선점이 다른 좌석에 살아 있으면 409 HOLD_EXISTS + 내 bookingId — 이전 선택을 자동으로 버리지 않음 */
+    /** 내 선점이 다른 좌석에 살아 있으면 409 HOLD_EXISTS + 내 bookingId - 이전 선택을 자동으로 버리지 않음 */
     @Test
     void otherSeatWhileHoldingIsHoldExists() {
         selectable(77L);
@@ -244,7 +244,7 @@ class BookingServiceTest {
         verify(bookings, never()).save(any());
     }
 
-    /** ★ 선점 → PAYING → 승인 → 확정 순서. 승인은 PAYING 으로 바꾼 뒤에만 · 잠금은 booking → seat (확정 · 반환과 같은 순서 — 11/10) */
+    /** 선점 -> PAYING -> 승인 -> 확정 순서. 승인은 PAYING 으로 바꾼 뒤에만, 잠금은 booking -> seat (확정, 반환과 같은 순서 - ) */
     @Test
     void payMovesSeatToPayingBeforeApproving() {
         payable(9L, 77L, NOW_AT.plusMinutes(5));
@@ -266,7 +266,7 @@ class BookingServiceTest {
         order.verify(seats).sell(9L);
     }
 
-    /** 선점 마감 뒤 · 남이 가져간 뒤 — 410 HOLD_EXPIRED, 토스(Payment 승인)는 부르지 않음 */
+    /** 선점 마감 뒤, 남이 가져간 뒤 - 410 HOLD_EXPIRED, 토스(Payment 승인)는 부르지 않음 */
     @Test
     void expiredHoldCannotPay() {
         payable(9L, 77L, NOW_AT.minusSeconds(1));
@@ -281,10 +281,10 @@ class BookingServiceTest {
         verify(txManager).commit(argThat(TransactionStatus::isRollbackOnly));   // 먼저 찍은 paying_at 도 되돌림
     }
 
-    /** ★ 11/10 — 연타한 두 요청이 결제 중이 되기 전의 예매를 같이 읽었어도, 뒤 요청은 다시 읽어 409 SEAT_LOCKED (410 이 아님) */
+    /** - 연타한 두 요청이 결제 중이 되기 전의 예매를 같이 읽었어도, 뒤 요청은 다시 읽어 409 SEAT_LOCKED (410 이 아님) */
     @Test
     void doublePayDecidesFromFreshRead() {
-        payable(9L, 77L, NOW_AT.plusMinutes(5));                         // 처음 읽은 예매 — 아직 결제 중 아님
+        payable(9L, 77L, NOW_AT.plusMinutes(5));                         // 처음 읽은 예매 - 아직 결제 중 아님
         BookingEntity after = pending(9L, NOW_AT.plusMinutes(5));
         when(after.getPayingAt()).thenReturn(NOW_AT);                   // 앞 요청이 커밋한 뒤
         when(bookings.findById(9L)).thenReturn(Optional.of(after));
@@ -295,7 +295,7 @@ class BookingServiceTest {
         verify(payment, never()).confirm(anyLong(), anyLong(), anyString(), anyInt(), any());
     }
 
-    /** 같은 예매의 결제 승인 연타 — 이미 PAYING 이면 409 SEAT_LOCKED */
+    /** 같은 예매의 결제 승인 연타 - 이미 PAYING 이면 409 SEAT_LOCKED */
     @Test
     void payingTwiceIsSeatLocked() {
         BookingEntity b = payable(9L, 77L, NOW_AT.plusMinutes(5));
@@ -307,7 +307,7 @@ class BookingServiceTest {
         verify(payment, never()).confirm(anyLong(), anyLong(), anyString(), anyInt(), any());
     }
 
-    /** ★ 80B — 거절(한도초과 등)이면 선점 유지 · PAYING → HELD · 새 결제(새 pgOrderId)로 다시 */
+    /** 80B - 거절(한도초과 등)이면 선점 유지, PAYING -> HELD, 새 결제(새 pgOrderId)로 다시 */
     @Test
     void declinedPaymentKeepsHoldWithNewOrder() {
         payable(9L, 77L, NOW_AT.plusMinutes(3));
@@ -344,7 +344,7 @@ class BookingServiceTest {
         verify(payment, never()).prepare(anyLong(), anyLong(), anyInt());
     }
 
-    /** Payment 가 승인 전에 거부 (금액 위조 등) — PAYING → HELD 로 되돌리고 코드는 그대로 전달 */
+    /** Payment 가 승인 전에 거부 (금액 위조 등) - PAYING -> HELD 로 되돌리고 코드는 그대로 전달 */
     @Test
     void rejectedPaymentGoesBackToHeld() {
         payable(9L, 77L, NOW_AT.plusMinutes(5));
@@ -358,7 +358,7 @@ class BookingServiceTest {
         verify(bookings, never()).cancel(anyLong());
     }
 
-    /** 승인 응답 없음 — PAYING 그대로 두고 503 PAYMENT_PENDING (정리가 1분 뒤 결과를 물음) */
+    /** 승인 응답 없음 - PAYING 그대로 두고 503 PAYMENT_PENDING (정리가 1분 뒤 결과를 물음) */
     @Test
     void unknownPaymentKeepsPaying() {
         payable(9L, 77L, NOW_AT.plusMinutes(5));
@@ -374,7 +374,7 @@ class BookingServiceTest {
         verify(seats, never()).releaseBooking(anyLong());
     }
 
-    /** 응답의 expiresIn(남은 초 · DB 시계)으로 프론트가 타이머를 돌립니다 — 대기열을 끈 공연은 화면 7분 · 서버 599초 */
+    /** 응답의 expiresIn(남은 초, DB 시계)으로 프론트가 타이머를 돌립니다 - 대기열을 끈 공연은 화면 7분, 서버 599초 */
     @Test
     void newHoldReturnsTimerInSeconds() {
         selectable(77L);
@@ -389,7 +389,7 @@ class BookingServiceTest {
         assertThat(created.pgOrderId()).isEqualTo("TICKET-9");
     }
 
-    /** 좌석을 고를 때 입장 토큰에 남은 시간을 이어받습니다 — 시계가 다시 시작되지 않음 */
+    /** 좌석을 고를 때 입장 토큰에 남은 시간을 이어받습니다 - 시계가 다시 시작되지 않음 */
     @Test
     void holdContinuesEntryTokenClock() {
         when(queue.requireEntry(any(), anyLong(), any())).thenReturn(OptionalLong.of(300));
@@ -415,7 +415,7 @@ class BookingServiceTest {
         verify(bookings).startHold(9L, 599);
     }
 
-    /** 같은 좌석을 다시 골라도 타이머는 그대로 — 새로고침 · 더블클릭으로 늘릴 수 없음 */
+    /** 같은 좌석을 다시 골라도 타이머는 그대로 - 새로고침, 더블클릭으로 늘릴 수 없음 */
     @Test
     void sameSeatKeepsTimer() {
         selectable(77L);
@@ -432,7 +432,7 @@ class BookingServiceTest {
         verify(payment, never()).prepare(anyLong(), anyLong(), anyInt());
     }
 
-    /** 내 선점이 마감됐는데 정리 전 — 정리를 기다리지 않고 먼저 정리(결제 무효화 → EXPIRED)한 뒤 새로 선점 */
+    /** 내 선점이 마감됐는데 정리 전 - 정리를 기다리지 않고 먼저 정리(결제 무효화 -> EXPIRED)한 뒤 새로 선점 */
     @Test
     void expiredOwnHoldIsClearedBeforeNewHold() {
         selectable(77L);
@@ -469,9 +469,9 @@ class BookingServiceTest {
         verify(seats, never()).startPaying(anyLong(), anyLong());
     }
 
-    // ── 1인 N매 ────────────────────────────────────────────────
+    // ── 1인 N매
 
-    /** 여러 좌석은 id 순서로 잡고 금액은 좌석 가격의 합 — 요청 순서와 무관 */
+    /** 여러 좌석은 id 순서로 잡고 금액은 좌석 가격의 합 - 요청 순서와 무관 */
     @Test
     void multipleSeatsAreHeldInIdOrderAndSummed() {
         selectable(78L, 77L);
@@ -488,7 +488,7 @@ class BookingServiceTest {
         verify(bookingSeats, times(2)).save(any());
     }
 
-    /** 하나라도 남이 잡았으면 전부 안 잡힘 — 롤백 · 409 SEAT_TAKEN (어느 좌석인지 result.seatId) */
+    /** 하나라도 남이 잡았으면 전부 안 잡힘 - 롤백, 409 SEAT_TAKEN (어느 좌석인지 result.seatId) */
     @Test
     void oneTakenSeatRollsBackAll() {
         selectable(77L, 78L);
@@ -504,7 +504,7 @@ class BookingServiceTest {
         verify(payment, never()).prepare(anyLong(), anyLong(), anyInt());
     }
 
-    /** 공연의 1인 매수를 넘으면 409 — 예매를 만들지 않음 */
+    /** 공연의 1인 매수를 넘으면 409 - 예매를 만들지 않음 */
     @Test
     void moreSeatsThanLimitIsRejected() {
         selectable(1L, 2L, 3L, 4L, 5L);
@@ -523,9 +523,9 @@ class BookingServiceTest {
                 .extracting(e -> ((GeneralException) e).getErrorCode().getCode()).isEqualTo("SEAT_NOT_FOUND");
     }
 
-    // ── 취소 알림 · 탈퇴 ───────────────────────────────────────
+    // ── 취소 알림, 탈퇴
 
-    /** 확정 예매 취소(환불)만 booking.cancelled — 예매 행을 잠그고 본 상태로 정합니다 */
+    /** 확정 예매 취소(환불)만 booking.cancelled - 예매 행을 잠그고 본 상태로 정합니다 */
     @Test
     void cancellingConfirmedBookingPublishesCancelled() {
         BookingEntity booking = pending(9L, null);
@@ -569,9 +569,9 @@ class BookingServiceTest {
         verify(events, never()).bookingCancelled(any(), any(), any(), any(), anyInt(), any());
     }
 
-    // ── 탈퇴 (11/27 TOS v3) ────────────────────────────────────
+    // ── 탈퇴 (TOS v3)
 
-    /** 결제 전 예매 — 표시를 먼저 커밋하고, 만료 정리와 같은 순서 (Payment 먼저 → EXPIRED · 좌석 반환) */
+    /** 결제 전 예매 - 표시를 먼저 커밋하고, 만료 정리와 같은 순서 (Payment 먼저 -> EXPIRED, 좌석 반환) */
     @Test
     void withdrawnUserPendingHoldsAreReleased() {
         BookingEntity hold = pending(5L, NOW_AT.plusMinutes(5));
@@ -591,7 +591,7 @@ class BookingServiceTest {
         verify(payment, never()).cancel(5L, "USER_WITHDRAWN", true);
     }
 
-    /** 확정 · 탈퇴가 회차 24시간 전보다 앞 — 회원 취소와 같은 순서로 환불 (Payment 환불 → CANCELLED · 좌석 반환 · booking.cancelled) */
+    /** 확정, 탈퇴가 회차 24시간 전보다 앞 - 회원 취소와 같은 순서로 환불 (Payment 환불 -> CANCELLED, 좌석 반환, booking.cancelled) */
     @Test
     void withdrawnConfirmedBookingIsRefundedBefore24Hours() {
         BookingEntity paid = confirmed(6L, NOW_AT);
@@ -612,7 +612,7 @@ class BookingServiceTest {
         verify(bookings, never()).forfeit(anyLong());
     }
 
-    /** 확정 · 24시간 이내 — 환불 없이 EXPIRED · 좌석은 SOLD 그대로 (Payment 를 부르지 않음) */
+    /** 확정, 24시간 이내 - 환불 없이 EXPIRED, 좌석은 SOLD 그대로 (Payment 를 부르지 않음) */
     @Test
     void withdrawnConfirmedBookingIsForfeitedWithin24Hours() {
         confirmed(6L, NOW_AT);
@@ -628,10 +628,10 @@ class BookingServiceTest {
         verify(events, never()).bookingCancelled(any(), any(), any(), any(), anyInt(), any());
     }
 
-    /** ★ 24시간 기준은 탈퇴 표시 시각 — Payment 가 하루 죽어 재시도가 늦어져도 환불 대상은 그대로 환불 */
+    /** 24시간 기준은 탈퇴 표시 시각 - Payment 가 하루 죽어 재시도가 늦어져도 환불 대상은 그대로 환불 */
     @Test
     void retryUsesWithdrawalTimeNotRetryTime() {
-        confirmed(6L, NOW_AT.minusHours(30));   // 30시간 전 탈퇴 · 그때는 회차 48시간 전
+        confirmed(6L, NOW_AT.minusHours(30));   // 30시간 전 탈퇴, 그때는 회차 48시간 전
         sessionAt(NOW_AT.plusHours(18));
         when(bookings.findWithdrawnOpen(50)).thenReturn(List.of(6L));
         when(bookings.lockStatus(6L)).thenReturn("CONFIRMED");
@@ -645,7 +645,7 @@ class BookingServiceTest {
         verify(bookings, never()).forfeit(anyLong());
     }
 
-    /** Payment 불통 — 예외 없이 멈춤 (표시는 커밋됨 · 30초 재시도가 이어서) · 좌석 그대로 */
+    /** Payment 불통 - 예외 없이 멈춤 (표시는 커밋됨, 30초 재시도가 이어서), 좌석 그대로 */
     @Test
     void withdrawnPausesWhilePaymentIsDown() {
         confirmed(6L, NOW_AT);
@@ -660,9 +660,9 @@ class BookingServiceTest {
         verify(bookings, never()).cancel(anyLong());
     }
 
-    // ── 회차 (11/27) ───────────────────────────────────────────
+    // ── 회차
 
-    /** 예매 하나 = 회차 하나 — 다른 회차 좌석이 섞이면 400 */
+    /** 예매 하나 = 회차 하나 - 다른 회차 좌석이 섞이면 400 */
     @Test
     void seatsOfDifferentSessionsAreRejected() {
         selectable(77L, 78L);
@@ -685,7 +685,7 @@ class BookingServiceTest {
         verify(bookings, never()).save(any());
     }
 
-    /** 1인 1예매는 회차마다 — 다른 회차의 확정 예매는 상관없고, 같은 회차면 409 */
+    /** 1인 1예매는 회차마다 - 다른 회차의 확정 예매는 상관없고, 같은 회차면 409 */
     @Test
     void confirmedBookingBlocksOnlyItsOwnSession() {
         selectable(77L);
@@ -707,7 +707,7 @@ class BookingServiceTest {
                 });
     }
 
-    /** 진행 중 선점은 공연에 하나 — 다른 회차에 살아 있는 선점이 있으면 같은 좌석 번호여도 409 HOLD_EXISTS */
+    /** 진행 중 선점은 공연에 하나 - 다른 회차에 살아 있는 선점이 있으면 같은 좌석 번호여도 409 HOLD_EXISTS */
     @Test
     void liveHoldInOtherSessionIsHoldExists() {
         selectable(77L);
@@ -724,7 +724,7 @@ class BookingServiceTest {
         verify(bookings, never()).save(any());
     }
 
-    /** 확정 예매 취소 마감은 예매한 회차 기준 — 공연 첫 회차가 지나도 뒤 회차 예매는 24시간 전까지 환불 */
+    /** 확정 예매 취소 마감은 예매한 회차 기준 - 공연 첫 회차가 지나도 뒤 회차 예매는 24시간 전까지 환불 */
     @Test
     void cancelDeadlineFollowsBookedSession() {
         BookingEntity booking = confirmed(9L, null);
@@ -740,7 +740,7 @@ class BookingServiceTest {
         verify(payment).cancel(9L, "USER_CANCEL", true);
     }
 
-    /** 티켓 상세 — 입장 필드 5개 (회차 기준 · entryStatus 는 항상 값이 있음) */
+    /** 티켓 상세 - 입장 필드 5개 (회차 기준, entryStatus 는 항상 값이 있음) */
     @Test
     void detailCarriesEntryFields() {
         BookingEntity booking = confirmed(9L, null);
@@ -778,7 +778,7 @@ class BookingServiceTest {
         return concert;
     }
 
-    /** 1인 4매 공연 · 좌석은 전부 55,000원 */
+    /** 1인 4매 공연, 좌석은 전부 55,000원 */
     private void selectable(long... seatIds) {
         ConcertEntity concert = concert();
         when(concert.getMaxSeatsPerUser()).thenReturn(4);
@@ -795,7 +795,7 @@ class BookingServiceTest {
         when(seats.findAllById(any())).thenReturn(found);
     }
 
-    /** 새 선점 — 저장 · 선점 성공 · 다시 읽으면 서버 마감 = 지금 + 599초 */
+    /** 새 선점 - 저장, 선점 성공, 다시 읽으면 서버 마감 = 지금 + 599초 */
     private void newHold(long bookingId) {
         BookingEntity saved = pending(bookingId, NOW_AT.plusSeconds(599));
         when(bookings.save(any())).thenReturn(saved);
@@ -806,7 +806,7 @@ class BookingServiceTest {
     private BookingEntity payable(long bookingId, long seatId, OffsetDateTime holdExpiresAt) {
         BookingEntity b = pending(bookingId, holdExpiresAt);
         when(b.getConcertId()).thenReturn(1L);
-        when(bookings.markPaying(bookingId)).thenReturn(1);   // PENDING — 좌석 쪽(startPaying)이 결과를 정함
+        when(bookings.markPaying(bookingId)).thenReturn(1);   // PENDING - 좌석 쪽(startPaying)이 결과를 정함
         when(bookings.findByIdAndUserId(bookingId, 3L)).thenReturn(Optional.of(b));
         when(bookings.findById(bookingId)).thenReturn(Optional.of(b));
         when(bookingSeats.findByBookingId(bookingId)).thenReturn(List.of(new BookingSeatEntity(bookingId, seatId)));
