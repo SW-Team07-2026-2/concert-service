@@ -103,6 +103,17 @@ class ConcertSchemaTest {
         registry.add("spring.datasource.password", POSTGRES::getPassword);
     }
 
+    @Autowired com.indie.concert.domain.queue.repository.QueueEntryJpaRepository withdrawalQueueEntries;
+
+    @Test
+    void deletesOnlyWithdrawnMembersQueueSnapshots() {
+        long concertId = concert("queue-withdrawal");
+        jdbc.update("INSERT INTO queue_entry (concert_id, user_id, seq, status) VALUES (?, 70001, 1, 'WAITING'), (?, 70002, 2, 'WAITING')", concertId, concertId);
+        assertThat(withdrawalQueueEntries.deleteForUser(70001)).isEqualTo(1);
+        assertThat(withdrawalQueueEntries.deleteForUser(70001)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM queue_entry WHERE concert_id = ? AND user_id = 70002", Long.class, concertId)).isEqualTo(1);
+    }
+
     @TestConfiguration
     static class Beans {
         @Bean ObjectMapper objectMapper() { return new ObjectMapper().findAndRegisterModules(); }

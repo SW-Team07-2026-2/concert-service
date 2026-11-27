@@ -3,6 +3,7 @@ package com.indie.concert.domain.booking.consumer;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indie.concert.domain.booking.service.BookingService;
+import com.indie.concert.domain.queue.service.QueueWithdrawalCleanup;
 import com.indie.concert.global.event.EventEnvelope;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -18,10 +19,12 @@ public class UserEventConsumer {
 
     private final BookingService bookingService;
     private final ObjectMapper objectMapper;
+    private final QueueWithdrawalCleanup queues;
 
-    public UserEventConsumer(BookingService bookingService, ObjectMapper objectMapper) {
+    public UserEventConsumer(BookingService bookingService, ObjectMapper objectMapper, QueueWithdrawalCleanup queues) {
         this.bookingService = bookingService;
         this.objectMapper = objectMapper;
+        this.queues = queues;
     }
 
     /**
@@ -30,10 +33,11 @@ public class UserEventConsumer {
      * @param record Kafka에서 수신한 이벤트 레코드
      * @param ack 처리 완료 후 오프셋을 커밋할 승인 객체
      */
-    @KafkaListener(topics = "user.withdrawn")
+    @KafkaListener(topics = "user.withdrawn", containerFactory = "withdrawalKafkaListenerContainerFactory")
     public void onUserWithdrawn(ConsumerRecord<String, String> record, Acknowledgment ack) throws JsonProcessingException {
         EventEnvelope e = EventEnvelope.parse(objectMapper, record.value());
         bookingService.releaseWithdrawn(e.requiredLong("userId"));
+        queues.remove(e.requiredLong("userId"));
         ack.acknowledge();
     }
 }

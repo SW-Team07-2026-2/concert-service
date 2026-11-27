@@ -8,6 +8,7 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
@@ -118,6 +119,26 @@ public class RedisQueueStore implements QueueStore {
         String score = call(() -> redis.execute(LEAVE,
                 List.of(queueKey(concertId), aliveKey(concertId, userId), entryKey(concertId, userId)), String.valueOf(userId)));
         return score == null ? OptionalLong.empty() : OptionalLong.of((long) Double.parseDouble(score));
+    }
+
+    @Override
+    public void removeUser(long userId) {
+        call(() -> {
+            try (var keys = redis.scan(ScanOptions.scanOptions().match("queue:concert:*").count(100).build())) {
+                while (keys.hasNext()) {
+                    String key = keys.next();
+                    long concertId = Long.parseLong(key.substring("queue:concert:".length()));
+                    leave(concertId, userId);
+                }
+            }
+            // 입장 후 ZSET 자체가 만료되거나 삭제된 경우에도 개인 키는 정리합니다.
+            for (String pattern : List.of("entry:*:" + userId, "queue:alive:*:" + userId)) {
+                try (var keys = redis.scan(ScanOptions.scanOptions().match(pattern).count(100).build())) {
+                    while (keys.hasNext()) redis.delete(keys.next());
+                }
+            }
+            return null;
+        });
     }
 
     @Override

@@ -4,6 +4,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.kafka.common.TopicPartition;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
+import org.springframework.boot.autoconfigure.kafka.ConcurrentKafkaListenerContainerFactoryConfigurer;
+import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
@@ -16,6 +19,23 @@ import org.springframework.util.backoff.FixedBackOff;
  */
 @Configuration
 public class KafkaConfig {
+
+    /** 탈퇴 정리는 Redis 장애 중에도 유실하지 않고 재시도합니다. 잘못된 메시지는 기존 DLT로 보냅니다. */
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<Object, Object>
+            withdrawalKafkaListenerContainerFactory(
+                    ConcurrentKafkaListenerContainerFactoryConfigurer configurer,
+                    ConsumerFactory<Object, Object> consumerFactory,
+                    KafkaTemplate<String, String> kafkaTemplate) {
+        var factory = new ConcurrentKafkaListenerContainerFactory<Object, Object>();
+        configurer.configure(factory, consumerFactory);
+        var recoverer = new DeadLetterPublishingRecoverer(kafkaTemplate,
+                (record, ex) -> new TopicPartition(record.topic() + ".DLT", -1));
+        var handler = new DefaultErrorHandler(recoverer, new FixedBackOff(30_000L, FixedBackOff.UNLIMITED_ATTEMPTS));
+        handler.addNotRetryableExceptions(JsonProcessingException.class, IllegalArgumentException.class);
+        factory.setCommonErrorHandler(handler);
+        return factory;
+    }
 
     @Bean
     public DefaultErrorHandler kafkaErrorHandler(KafkaTemplate<String, String> kafkaTemplate) {
