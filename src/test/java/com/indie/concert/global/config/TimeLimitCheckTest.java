@@ -8,18 +8,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TimeLimitCheckTest {
 
     /** application.yml 값 */
-    static ConcertProperties props(long holdMinutes, long holdGraceSeconds, long cancelDeadlineHours, long openBeforeHours,
+    static ConcertProperties props(long holdMinutes, long holdGraceSeconds, long cancelDeadlineHours, long openBeforeMinutes,
                                    long admitIntervalMs, long leaderTtlMs, long aliveTtlSeconds, long degradedPollAfterMs) {
         return new ConcertProperties(null, null, null, "Asia/Seoul",
                 new ConcertProperties.Booking(holdMinutes, holdGraceSeconds, 60, cancelDeadlineHours, 30000),
                 new ConcertProperties.Queue(20, admitIntervalMs, 200, 5000, 1000, aliveTtlSeconds, 7, 2000, 15000, degradedPollAfterMs, leaderTtlMs),
                 null, null, null, null,
-                new ConcertProperties.Entry(30, openBeforeHours, 6));
+                new ConcertProperties.Entry(30, openBeforeMinutes, 30));
     }
 
     @Test
     void currentSettingsPass() {
-        assertThatCode(() -> TimeLimitCheck.check(props(7, 179, 24, 3, 1000, 5000, 45, 3000))).doesNotThrowAnyException();
+        assertThatCode(() -> TimeLimitCheck.check(props(7, 179, 24, 60, 1000, 5000, 45, 3000))).doesNotThrowAnyException();
     }
 
     @Test
@@ -34,28 +34,30 @@ class TimeLimitCheckTest {
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("entry-ttl-minutes");
     }
 
+    /** 11/27 QR 은 회차 60분 전부터 — 취소 마감(24시간 전)과 같거나 앞서면 입장 뒤 환불이 생기므로 기동 실패 */
     @Test
     void qrOpeningBeforeCancelDeadlineFails() {
-        assertThatThrownBy(() -> TimeLimitCheck.check(props(7, 179, 24, 24, 1000, 5000, 15, 3000)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("open-before-hours");
+        assertThatThrownBy(() -> TimeLimitCheck.check(props(7, 179, 24, 24 * 60, 1000, 5000, 15, 3000)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("open-before-minutes");
+        assertThatCode(() -> TimeLimitCheck.check(props(7, 179, 24, 24 * 60 - 1, 1000, 5000, 45, 3000))).doesNotThrowAnyException();
     }
 
     @Test
     void leaderLockShorterThanAdmitIntervalFails() {
-        assertThatThrownBy(() -> TimeLimitCheck.check(props(7, 179, 24, 3, 1000, 1000, 15, 3000)))
+        assertThatThrownBy(() -> TimeLimitCheck.check(props(7, 179, 24, 60, 1000, 1000, 15, 3000)))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("leader-ttl-ms");
     }
 
     @Test
     void aliveTtlShorterThanDegradedPollFails() {
-        assertThatThrownBy(() -> TimeLimitCheck.check(props(7, 179, 24, 3, 1000, 5000, 3, 3000)))
+        assertThatThrownBy(() -> TimeLimitCheck.check(props(7, 179, 24, 60, 1000, 5000, 3, 3000)))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("alive-ttl-seconds");
     }
 
     /** ✏️ 11/25 — 가장 긴 조회 간격 15초를 3번 놓칠 시간(45초)보다 짧으면 기동 실패 */
     @Test
     void aliveTtlShorterThanThreeSlowestPollsFails() {
-        assertThatThrownBy(() -> TimeLimitCheck.check(props(7, 179, 24, 3, 1000, 5000, 44, 3000)))
+        assertThatThrownBy(() -> TimeLimitCheck.check(props(7, 179, 24, 60, 1000, 5000, 44, 3000)))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("alive-ttl-seconds");
     }
 }

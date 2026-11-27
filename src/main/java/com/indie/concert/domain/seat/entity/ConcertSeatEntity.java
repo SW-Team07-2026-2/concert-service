@@ -12,7 +12,7 @@ import jakarta.persistence.UniqueConstraint;
 import java.time.OffsetDateTime;
 
 /**
- * concert_seat — 공연 하나의 좌석 하나 (판매 단위). 위치는 seat_id 로 공연장 좌석(seat)을 가리키고, 가격 · 상태는 여기에.
+ * concert_seat — 공연 회차 하나의 좌석 하나 (판매 단위 · 11/27 회차마다 한 벌). 위치는 seat_id 로 공연장 좌석(seat)을 가리키고, 가격 · 상태는 여기에.
  * 상태 전이는 ConcertSeatRepository 의 조건부 UPDATE 로만 합니다 (좌석 중복 판매의 최종 보장).
  * <pre>
  * AVAILABLE ──좌석 선택 · 한 명──▶ HELD(선점) ──결제 승인 요청──▶ PAYING(승인 중) ──승인──▶ SOLD
@@ -27,7 +27,7 @@ import java.time.OffsetDateTime;
  */
 @Entity
 @Table(name = "concert_seat", uniqueConstraints = @UniqueConstraint(name = "uq_concert_seat",
-        columnNames = {"concert_id", "seat_id"}))
+        columnNames = {"concert_id", "session_id", "seat_id"}))
 public class ConcertSeatEntity {
 
     public enum Status { AVAILABLE, HELD, PAYING, SOLD }
@@ -37,6 +37,9 @@ public class ConcertSeatEntity {
     private Long id;
 
     private Long concertId;
+
+    /** 11/27 회차 — 회차마다 좌석 한 벌 */
+    private Long sessionId;
 
     private Long seatId;
 
@@ -55,6 +58,7 @@ public class ConcertSeatEntity {
 
     public Long getId() { return id; }
     public Long getConcertId() { return concertId; }
+    public Long getSessionId() { return sessionId; }
     public Long getSeatId() { return seatId; }
     public Integer getPrice() { return price; }
     public Status getStatus() { return status; }

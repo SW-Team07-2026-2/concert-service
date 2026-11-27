@@ -19,6 +19,7 @@ import java.time.OffsetDateTime;
  * </pre>
  * 11/04 77A — 예매 PENDING 이 곧 선점(holdId = bookingId)입니다. 결제가 거절돼도 PENDING 그대로 (새 결제로 다시 · 80B).
  * 입장(검표)은 상태가 아니라 checked_in_at 으로 남깁니다 — CONFIRMED 그대로, 한 번만 기록 (11/01).
+ * 11/27 탈퇴 — 회차 24시간 전보다 앞이면 환불(CANCELLED), 그 뒤면 환불 없이 CONFIRMED → EXPIRED (EXPIRED 는 선점 만료 · 탈퇴 만료 둘 다).
  */
 @Entity
 @Table(name = "booking")
@@ -33,6 +34,9 @@ public class BookingEntity {
     private Long userId;
 
     private Long concertId;
+
+    /** 11/27 예매한 회차 — 1인 1예매 · 입장 QR 시간 · 취소 마감이 이 회차 기준 */
+    private Long sessionId;
 
     @Enumerated(EnumType.STRING)
     private Status status;
@@ -53,11 +57,15 @@ public class BookingEntity {
 
     private Long checkedInBy;
 
+    /** 11/27 회원 탈퇴 — 정리(환불 · 만료) 표시. 24시간 기준은 이 시각으로 봅니다 (재시도가 늦어져도 결과가 바뀌지 않게) */
+    private OffsetDateTime withdrawnAt;
+
     protected BookingEntity() {}
 
-    public BookingEntity(Long userId, Long concertId, Integer totalPrice, OffsetDateTime now) {
+    public BookingEntity(Long userId, Long concertId, Long sessionId, Integer totalPrice, OffsetDateTime now) {
         this.userId = userId;
         this.concertId = concertId;
+        this.sessionId = sessionId;
         this.status = Status.PENDING;
         this.totalPrice = totalPrice;
         this.createdAt = now;
@@ -66,6 +74,7 @@ public class BookingEntity {
     public Long getId() { return id; }
     public Long getUserId() { return userId; }
     public Long getConcertId() { return concertId; }
+    public Long getSessionId() { return sessionId; }
     public Status getStatus() { return status; }
     public Integer getTotalPrice() { return totalPrice; }
     public String getPgOrderId() { return pgOrderId; }
@@ -73,4 +82,5 @@ public class BookingEntity {
     public OffsetDateTime getHoldExpiresAt() { return holdExpiresAt; }
     public OffsetDateTime getPayingAt() { return payingAt; }
     public OffsetDateTime getCheckedInAt() { return checkedInAt; }
+    public OffsetDateTime getWithdrawnAt() { return withdrawnAt; }
 }

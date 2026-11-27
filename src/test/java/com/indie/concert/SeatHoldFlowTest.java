@@ -6,8 +6,10 @@ import com.indie.concert.domain.booking.dto.response.BookingCreated;
 import com.indie.concert.domain.booking.repository.BookingRepository;
 import com.indie.concert.domain.booking.repository.BookingSeatRepository;
 import com.indie.concert.domain.booking.service.BookingService;
+import com.indie.concert.domain.booking.service.EntryWindow;
 import com.indie.concert.domain.concert.repository.ConcertArtistRepository;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
+import com.indie.concert.domain.concert.repository.ConcertSessionRepository;
 import com.indie.concert.domain.concert.repository.VenueRepository;
 import com.indie.concert.domain.concert.service.LineupReader;
 import com.indie.concert.domain.queue.repository.QueueEntryRepository;
@@ -95,7 +97,7 @@ class SeatHoldFlowTest {
     private static final ConcertProperties PROPS = new ConcertProperties(null, null, null, "Asia/Seoul",
             new ConcertProperties.Booking(7, 179, 60, 24, 30000),
             new ConcertProperties.Queue(20, 1000, 200, 5000, 1000, 15, 7, 2000, 15000, 3000, 5000),
-            null, null, null, null, null);
+            null, null, null, null, new ConcertProperties.Entry(30, 60, 30));
 
     private static LettuceConnectionFactory redisFactory;
     private static QueueStore queueStore;
@@ -118,6 +120,7 @@ class SeatHoldFlowTest {
     @Autowired ConcertSeatRepository seats;
     @Autowired ConcertArtistRepository concertArtists;
     @Autowired ConcertRepository concerts;
+    @Autowired ConcertSessionRepository sessions;
     @Autowired VenueRepository venues;
     @Autowired QueueEntryRepository queueEntries;
     @Autowired JdbcTemplate jdbc;
@@ -129,8 +132,8 @@ class SeatHoldFlowTest {
     @BeforeEach
     void wire() {
         QueueService queue = new QueueService(queueStore, queueEntries, concerts, seats, PROPS, new SimpleMeterRegistry(), Clock.systemUTC());
-        service = new BookingService(bookings, bookingSeats, seats, concerts, venues, new LineupReader(concertArtists), queue,
-                payment, mock(BookingEvents.class), tx, PROPS, Clock.systemUTC());
+        service = new BookingService(bookings, bookingSeats, seats, concerts, sessions, venues, new LineupReader(concertArtists), queue,
+                payment, mock(BookingEvents.class), new EntryWindow(PROPS), tx, PROPS, Clock.systemUTC());
     }
 
     /** ① 100명이 같은 좌석을 동시에 → 선점 1명 · 99명 409 SEAT_TAKEN (락 없이 조건부 UPDATE 만으로) */
@@ -486,12 +489,15 @@ class SeatHoldFlowTest {
         return jdbc.queryForObject("SELECT status FROM booking WHERE id = ?", String.class, bookingId);
     }
 
-    /** 대기열을 켠 · 판매 중인 공연 (1인 4매) */
+    /** 대기열을 켠 · 판매 중인 공연 (1인 4매) · 회차 하나 */
     private long concert(String title) {
-        return jdbc.queryForObject("""
-                INSERT INTO concert (venue_id, title, type, starts_at, booking_open_at, queue_enabled, max_seats_per_user, updated_at)
-                VALUES (?, ?, 'SOLO', now() + interval '30 days', now() - interval '1 hour', TRUE, 4, now()) RETURNING id
+        long concertId = jdbc.queryForObject("""
+                INSERT INTO concert (venue_id, title, type, starts_at, last_starts_at, booking_open_at, queue_enabled, max_seats_per_user, updated_at)
+                VALUES (?, ?, 'SOLO', now() + interval '30 days', now() + interval '30 days', now() - interval '1 hour', TRUE, 4, now())
+                RETURNING id
                 """, Long.class, venue(), title);
+        jdbc.update("INSERT INTO concert_session (concert_id, starts_at) SELECT id, starts_at FROM concert WHERE id = ?", concertId);
+        return concertId;
     }
 
     /** 이 공연의 판매 좌석 하나 (55,000원) — 공연장 배치에 좌석을 하나 만들고 그 좌석을 팝니다 */
@@ -500,8 +506,9 @@ class SeatHoldFlowTest {
                 INSERT INTO seat (section_id, row_no, seat_no, x, y, angle) VALUES (?, 1, ?, 0.5, 0.5, 0) RETURNING id
                 """, Long.class, section(), SEAT_NO.incrementAndGet());
         return jdbc.queryForObject("""
-                INSERT INTO concert_seat (concert_id, seat_id, price, status) VALUES (?, ?, 55000, 'AVAILABLE') RETURNING id
-                """, Long.class, concertId, seatId);
+                INSERT INTO concert_seat (concert_id, session_id, seat_id, price, status)
+                SELECT ?, ss.id, ?, 55000, 'AVAILABLE' FROM concert_session ss WHERE ss.concert_id = ? RETURNING id
+                """, Long.class, concertId, seatId, concertId);
     }
 
     private static final AtomicInteger SEAT_NO = new AtomicInteger();

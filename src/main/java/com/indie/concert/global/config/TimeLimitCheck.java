@@ -26,9 +26,9 @@ public class TimeLimitCheck {
         require(queue.entryTtlMinutes() <= booking.holdMinutes(),
                 "입장 토큰(entry-ttl-minutes = %d)은 화면 시계(hold-minutes = %d)보다 길 수 없습니다 — 입장부터 결제하기까지 시계가 하나입니다",
                 queue.entryTtlMinutes(), booking.holdMinutes());
-        require(props.entry().openBeforeHours() < booking.cancelDeadlineHours(),
-                "입장 QR 발급(open-before-hours = %d)은 취소 마감(cancel-deadline-hours = %d)보다 늦어야 합니다 — 입장 뒤 환불 방지",
-                props.entry().openBeforeHours(), booking.cancelDeadlineHours());
+        require(props.entry().openBeforeMinutes() < booking.cancelDeadlineHours() * 60,
+                "입장 QR 발급(open-before-minutes = %d)은 취소 마감(cancel-deadline-hours = %d)보다 늦어야 합니다 — 입장 뒤 환불 방지",
+                props.entry().openBeforeMinutes(), booking.cancelDeadlineHours());
         require(queue.leaderTtlMs() > queue.admitIntervalMs(),
                 "입장 처리기 리더 락(leader-ttl-ms = %d)은 입장 주기(admit-interval-ms = %d)보다 길어야 합니다",
                 queue.leaderTtlMs(), queue.admitIntervalMs());

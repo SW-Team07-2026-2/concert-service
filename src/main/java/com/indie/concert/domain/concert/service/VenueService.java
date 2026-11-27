@@ -56,7 +56,7 @@ public class VenueService {
         VenueEntity v = venueRepository.findById(id).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
         OffsetDateTime now = OffsetDateTime.now(clock);
         List<ConcertEntity> concerts = concertRepository
-                .findByVenueIdAndStartsAtGreaterThanEqualOrderByStartsAtAsc(id, now, Limit.of(UPCOMING_LIMIT));
+                .findByVenueIdAndLastStartsAtGreaterThanEqualOrderByStartsAtAsc(id, now, Limit.of(UPCOMING_LIMIT));
         Map<Long, List<ArtistRef>> lineups = lineupReader.of(concerts.stream().map(ConcertEntity::getId).toList());
         List<UpcomingConcert> upcoming = concerts.stream()
                 .map(c -> new UpcomingConcert(c.getId(), c.getTitle(), c.getType().name(),

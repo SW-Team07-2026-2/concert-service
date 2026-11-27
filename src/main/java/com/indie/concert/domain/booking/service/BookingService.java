@@ -7,6 +7,7 @@ import com.indie.concert.domain.booking.dto.response.BookingDetail;
 import com.indie.concert.domain.booking.dto.response.BookingPaid;
 import com.indie.concert.domain.booking.dto.response.BookingSummary;
 import com.indie.concert.domain.booking.dto.response.ConcertRef;
+import com.indie.concert.domain.booking.dto.response.EntryInfo;
 import com.indie.concert.domain.booking.dto.response.SeatRef;
 import com.indie.concert.domain.booking.entity.BookingEntity;
 import com.indie.concert.domain.booking.entity.BookingSeatEntity;
@@ -15,8 +16,11 @@ import com.indie.concert.domain.booking.repository.BookingRepository;
 import com.indie.concert.domain.booking.repository.BookingSeatRepository;
 import com.indie.concert.domain.concert.dto.response.ArtistRef;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
+import com.indie.concert.domain.concert.entity.ConcertSessionEntity;
 import com.indie.concert.domain.concert.entity.VenueEntity;
+import com.indie.concert.domain.concert.exception.SessionErrorCode;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
+import com.indie.concert.domain.concert.repository.ConcertSessionRepository;
 import com.indie.concert.domain.concert.repository.VenueRepository;
 import com.indie.concert.domain.concert.service.LineupReader;
 import com.indie.concert.domain.queue.service.QueueService;
@@ -61,6 +65,8 @@ import java.util.stream.Collectors;
  * </pre>
  * 마감이 지난 선점은 정리를 기다리지 않고 다음 사람이 바로 가져갑니다 — 그 예매의 승인은 ②에서 막히므로 돈이 나가지 않습니다.
  * 같은 사용자의 동시 요청은 uq_booking_active 가 줄을 세웁니다 (사용자 락 없음 — 11/04 L2 해소).
+ * 11/27 회차 — 예매 하나 = 회차 하나 (좌석의 회차로 정함). 확정 예매는 회차마다 1건, 진행 중 선점은 공연에 하나 (다른 회차를 고르면 409 HOLD_EXISTS).
+ * 취소 마감 · 입장 시간은 예매한 회차 시작 기준입니다.
  * 예매 · 좌석을 함께 바꾸는 트랜잭션은 모두 booking → seat 순서로 잠그고, 좌석끼리는 id 순서입니다 (교착 방지 — 11/10).
  * booking.cancelled 는 확정 예매를 취소(환불)할 때만 냅니다 — 결제 전 선택 취소 · 만료 · 탈퇴 정리는 알림이 없습니다.
  * 🔴 좌석을 푸는 모든 경로는 Payment 를 먼저 끝냅니다 — 순서가 반대면 "좌석은 다른 사람에게 팔렸는데 결제는 승인됨"이 생깁니다.
@@ -74,29 +80,33 @@ public class BookingService {
     private final BookingSeatRepository bookingSeatRepository;
     private final ConcertSeatRepository concertSeatRepository;
     private final ConcertRepository concertRepository;
+    private final ConcertSessionRepository sessionRepository;
     private final VenueRepository venueRepository;
     private final LineupReader lineupReader;
     private final QueueService queueService;
     private final PaymentClient paymentClient;
     private final BookingEvents events;
+    private final EntryWindow entryWindow;
     private final TransactionTemplate tx;
     private final ConcertProperties.Booking props;
     private final Clock clock;
 
     public BookingService(BookingRepository bookingRepository, BookingSeatRepository bookingSeatRepository,
                           ConcertSeatRepository concertSeatRepository, ConcertRepository concertRepository,
-                          VenueRepository venueRepository, LineupReader lineupReader, QueueService queueService,
-                          PaymentClient paymentClient, BookingEvents events, TransactionTemplate tx, ConcertProperties props,
-                          Clock clock) {
+                          ConcertSessionRepository sessionRepository, VenueRepository venueRepository, LineupReader lineupReader,
+                          QueueService queueService, PaymentClient paymentClient, BookingEvents events, EntryWindow entryWindow,
+                          TransactionTemplate tx, ConcertProperties props, Clock clock) {
         this.bookingRepository = bookingRepository;
         this.bookingSeatRepository = bookingSeatRepository;
         this.concertSeatRepository = concertSeatRepository;
         this.concertRepository = concertRepository;
+        this.sessionRepository = sessionRepository;
         this.venueRepository = venueRepository;
         this.lineupReader = lineupReader;
         this.queueService = queueService;
         this.paymentClient = paymentClient;
         this.events = events;
+        this.entryWindow = entryWindow;
         this.tx = tx;
         this.props = props.booking();
         this.clock = clock;
@@ -107,6 +117,7 @@ public class BookingService {
      * 🔴 금액은 concert_seat.price 의 합으로만 정합니다 (요청에 금액 없음). 입장 토큰은 여기서만 봅니다 — 선점 마감이 토큰 남은 시간을 이어받아 입장부터 결제하기까지 시계가 하나입니다.
      * 같은 좌석들로 다시 부르면 진행 중인 선점을 그대로 (더블클릭 · 탭 2개 · 타이머 리셋 없음).
      * 다른 좌석이면 409 HOLD_EXISTS + 내 bookingId — 「이전단계」는 N13 으로 선택을 취소한 뒤 다시 고릅니다.
+     * 11/27 회차는 좌석으로 정합니다 — 좌석이 모두 같은 회차여야 하고(400 SEAT_SESSION_MISMATCH), 시작한 회차는 409 SESSION_CLOSED.
      */
     public BookingCreated create(long concertId, long userId, String entryToken, List<Long> seatIds) {
         ConcertEntity concert = concertRepository.findById(concertId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
@@ -120,20 +131,21 @@ public class BookingService {
         List<ConcertSeatEntity> seats = concertSeatRepository.findAllById(ids).stream()
                 .filter(s -> s.getConcertId().equals(concertId)).toList();
         if (seats.size() != ids.size()) throw new GeneralException(SeatErrorCode.SEAT_NOT_FOUND);
+        long sessionId = seats.get(0).getSessionId();
+        if (seats.stream().anyMatch(s -> s.getSessionId() != sessionId)) throw new GeneralException(SeatErrorCode.SEAT_SESSION_MISMATCH);
+        ConcertSessionEntity session = sessionRepository.findById(sessionId).orElseThrow();
+        if (!OffsetDateTime.now(clock).isBefore(session.getStartsAt())) throw new GeneralException(SessionErrorCode.SESSION_CLOSED);
         int amount = seats.stream().mapToInt(ConcertSeatEntity::getPrice).sum();
-        Optional<BookingEntity> mine = bookingRepository.findActive(concertId, userId);
-        if (mine.isPresent()) {
-            Optional<BookingCreated> kept = keepOrClear(mine.get(), ids);
-            if (kept.isPresent()) return kept.get();
-        }
+        Optional<BookingCreated> kept = keepOrClear(bookingRepository.findActive(concertId, userId), sessionId, ids);
+        if (kept.isPresent()) return kept.get();
         BookingEntity booking;
         try {
             booking = tx.execute(s -> {
-                BookingEntity b = bookingRepository.save(new BookingEntity(userId, concertId, amount, OffsetDateTime.now(clock)));
+                BookingEntity b = bookingRepository.save(new BookingEntity(userId, concertId, sessionId, amount, OffsetDateTime.now(clock)));
                 bookingRepository.startHold(b.getId(), holdSeconds(entryLeft));
                 for (long id : ids) {
                     bookingSeatRepository.save(new BookingSeatEntity(b.getId(), id));
-                    if (concertSeatRepository.hold(id, concertId, b.getId(), userId) == 0) {
+                    if (concertSeatRepository.hold(id, sessionId, b.getId(), userId) == 0) {
                         throw new GeneralException(SeatErrorCode.SEAT_TAKEN).with("seatId", id);   // 롤백 — 예매 · 먼저 잡은 좌석도 남지 않음
                     }
                 }
@@ -141,8 +153,7 @@ public class BookingService {
             });
         } catch (DataIntegrityViolationException e) {
             // 같은 사용자의 동시 요청 — uq_booking_active 가 먼저 들어간 쪽을 기다렸다가 막습니다. 그 선점을 그대로 돌려줍니다
-            BookingEntity first = bookingRepository.findActive(concertId, userId).orElseThrow(() -> e);
-            return keepOrClear(first, ids).orElseThrow(() -> e);
+            return keepOrClear(bookingRepository.findActive(concertId, userId), sessionId, ids).orElseThrow(() -> e);
         }
         return created(bookingRepository.findById(booking.getId()).orElseThrow(), prepared(booking.getId(), userId, booking.getTotalPrice(), true));
     }
@@ -201,10 +212,16 @@ public class BookingService {
                 : bookingRepository.findByUserIdAndIdLessThanOrderByIdDesc(userId, cursor.id(), limit);
         Map<Long, ConcertEntity> concerts = concertRepository.findAllById(rows.stream().map(BookingEntity::getConcertId).distinct().toList())
                 .stream().collect(Collectors.toMap(ConcertEntity::getId, Function.identity()));
+        Map<Long, ConcertSessionEntity> sessions = sessionRepository.findAllById(rows.stream().map(BookingEntity::getSessionId).distinct().toList())
+                .stream().collect(Collectors.toMap(ConcertSessionEntity::getId, Function.identity()));
+        OffsetDateTime now = OffsetDateTime.now(clock);
         List<BookingSummary> items = rows.stream().map(b -> {
             ConcertEntity c = concerts.get(b.getConcertId());
+            ConcertSessionEntity session = sessions.get(b.getSessionId());
+            EntryInfo entry = entryWindow.info(b, session.getStartsAt(), now);
             return new BookingSummary(b.getId(), b.getStatus().name(), b.getTotalPrice(), b.getCreatedAt(),
-                    c.getId(), c.getTitle(), c.getStartsAt());
+                    c.getId(), c.getTitle(), session.getStartsAt(), b.getSessionId(),
+                    entry.entryStatus(), entry.entryQrOpensAt(), entry.entryQrClosesAt(), entry.checkedInAt(), entry.serverTime());
         }).toList();
         return CursorPage.of(items, size, b -> new Cursor(null, b.bookingId()));
     }
@@ -214,14 +231,17 @@ public class BookingService {
     public BookingDetail get(long userId, long bookingId) {
         BookingEntity b = bookingRepository.findByIdAndUserId(bookingId, userId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND));
         ConcertEntity c = concertRepository.findById(b.getConcertId()).orElseThrow();
+        ConcertSessionEntity session = sessionRepository.findById(b.getSessionId()).orElseThrow();
         VenueEntity v = venueRepository.findById(c.getVenueId()).orElseThrow();
+        EntryInfo entry = entryWindow.info(b, session.getStartsAt(), OffsetDateTime.now(clock));
         return new BookingDetail(b.getId(), b.getStatus().name(), b.getTotalPrice(), b.getPgOrderId(), b.getCreatedAt(),
                 b.getStatus() == BookingEntity.Status.PENDING ? expiresAt(b) : null,
                 b.getStatus() == BookingEntity.Status.PENDING ? expiresIn(b) : null,
-                new ConcertRef(c.getId(), c.getTitle(), c.getStartsAt(), v.getName()), seatRefs(bookingId));
+                new ConcertRef(c.getId(), c.getTitle(), session.getStartsAt(), v.getName(), b.getSessionId()), seatRefs(bookingId),
+                entry.entryStatus(), entry.entryQrOpensAt(), entry.entryQrClosesAt(), entry.checkedInAt(), entry.serverTime());
     }
 
-    /** N13 — 결제 전이면 무효화(선택 취소), 확정이면 공연 24시간 전까지 환불 (FR-CON-14). Payment 를 먼저 취소하고 좌석을 돌려놓습니다 */
+    /** N13 — 결제 전이면 무효화(선택 취소), 확정이면 회차 시작 24시간 전까지 환불 (FR-CON-14). Payment 를 먼저 취소하고 좌석을 돌려놓습니다 */
     public BookingDetail cancel(long userId, long bookingId) {
         cancel(bookingRepository.findByIdAndUserId(bookingId, userId).orElseThrow(() -> new GeneralException(CommonErrorCode.NOT_FOUND)),
                 bookingId, "USER_CANCEL");
@@ -240,8 +260,7 @@ public class BookingService {
             case CANCELLED, EXPIRED -> throw notCancellable("이미 취소된 예매입니다");
             case CONFIRMED -> {
                 if (b.getCheckedInAt() != null) throw notCancellable("입장한 예매는 취소할 수 없습니다");   // 마감(24시간 전)을 줄여도 입장 뒤 환불은 막음
-                ConcertEntity c = concertRepository.findById(b.getConcertId()).orElseThrow();
-                if (!OffsetDateTime.now(clock).isBefore(c.getStartsAt().minusHours(props.cancelDeadlineHours()))) {
+                if (!OffsetDateTime.now(clock).isBefore(cancelDeadline(b))) {
                     throw notCancellable("공연 " + props.cancelDeadlineHours() + "시간 전까지만 취소할 수 있습니다");
                 }
             }
@@ -260,8 +279,8 @@ public class BookingService {
                 ConcertEntity c = concertRepository.findById(b.getConcertId()).orElseThrow();
                 VenueEntity v = venueRepository.findById(c.getVenueId()).orElseThrow();
                 if (sold == 0) log.error("booking_confirmed_without_paying_seat bookingId={}", bookingId);   // 승인은 PAYING 좌석에서만 — 생기면 수동 확인
-                events.bookingCompleted(b, c, v, lineupReader.of(c.getId()).stream().map(ArtistRef::id).toList(), sold,
-                        OffsetDateTime.now(clock));
+                events.bookingCompleted(b, c, sessionStartsAt(b), v, lineupReader.of(c.getId()).stream().map(ArtistRef::id).toList(),
+                        sold, OffsetDateTime.now(clock));
                 log.info("booking_confirmed bookingId={} seats={}", bookingId, sold);
                 return;
             }
@@ -280,15 +299,54 @@ public class BookingService {
     }
 
     /**
-     * user.withdrawn — 결제 전 예매(선점)를 정리해 좌석을 바로 돌려놓습니다. 확정 예매는 남깁니다 (환불 · 입장 기록).
-     * 만료 정리와 같은 순서 — Payment 를 먼저 끝내고(승인됐으면 확정), 아니면 좌석 반환. Payment 불통이면 예외 → 이벤트 재시도
+     * user.withdrawn (11/27 · TOS v3) — 탈퇴 회원의 예매를 정리합니다. 입장한 예매는 그대로 둡니다 (기록).
+     * <pre>
+     * 결제 전(선점)                        만료 정리와 같음 — Payment 먼저(승인됐으면 확정 → 아래로), 아니면 EXPIRED · 좌석 반환
+     * 확정 · 탈퇴가 회차 24시간 전보다 앞   환불 — 회원 취소와 같은 순서 (Payment 환불 → CANCELLED · 좌석 반환 · booking.cancelled)
+     * 확정 · 그 뒤                         환불 없이 EXPIRED · 좌석은 SOLD 그대로 (다시 팔지 않음)
+     * </pre>
+     * 먼저 정리 표시(withdrawn_at)를 커밋합니다 — 그 뒤로는 QR 발급 · 검표가 막히고, Payment 불통으로 남은 건은 재시도(retryWithdrawn)가 이어서 합니다.
+     * 24시간 기준은 표시 시각이라 재시도가 늦어져도 환불 여부가 바뀌지 않습니다. 표시가 실패하면 예외 → 이벤트 재시도
      */
     public void releaseWithdrawn(long userId) {
-        List<Long> pending = bookingRepository.findPendingIds(userId);
-        for (Long bookingId : pending) {
-            if (!settle(bookingId, "USER_WITHDRAWN")) throw new IllegalStateException("payment unavailable bookingId=" + bookingId);
+        tx.executeWithoutResult(s -> bookingRepository.markWithdrawn(userId, OffsetDateTime.now(clock)));
+        List<Long> open = bookingRepository.findWithdrawnIds(userId);
+        for (Long bookingId : open) {
+            if (!settleWithdrawn(bookingId)) break;   // Payment 불통 — 나머지는 재시도 주기에
         }
-        if (!pending.isEmpty()) log.info("booking_withdrawn_released userId={} bookings={}", userId, pending);
+        if (!open.isEmpty()) log.info("booking_withdrawn userId={} bookings={}", userId, open);
+    }
+
+    /** 탈퇴 정리 재시도 — 30초마다 (BookingExpiryJob). 표시는 됐는데 Payment 불통으로 닫지 못한 예매 */
+    public void retryWithdrawn(int batch) {
+        for (Long bookingId : bookingRepository.findWithdrawnOpen(batch)) {
+            if (!settleWithdrawn(bookingId)) return;   // Payment 불통 — 살아나면 다음 주기에 이어서
+        }
+    }
+
+    /** false = Payment 응답 없음 (결과를 모름) — 그대로 두고 다음에 다시 */
+    private boolean settleWithdrawn(long bookingId) {
+        BookingEntity b = bookingRepository.findById(bookingId).orElseThrow();
+        if (b.getStatus() == BookingEntity.Status.PENDING) {
+            if (!settle(bookingId, "USER_WITHDRAWN")) return false;
+            b = bookingRepository.findById(bookingId).orElseThrow();   // 승인돼 있었으면 확정됨 → 아래 규칙으로
+        }
+        if (b.getStatus() != BookingEntity.Status.CONFIRMED) return true;
+        if (b.getWithdrawnAt().isBefore(cancelDeadline(b))) {
+            try {
+                paymentClient.cancel(bookingId, "USER_WITHDRAWN", true);
+            } catch (PaymentClient.Unavailable e) {
+                log.warn("booking_withdrawn_refund_paused bookingId={} error={}", bookingId, e.getMessage());
+                return false;
+            }
+            release(bookingId, false);
+            log.info("booking_withdrawn_refunded bookingId={}", bookingId);
+            return true;
+        }
+        if (Boolean.TRUE.equals(tx.execute(s -> bookingRepository.forfeit(bookingId) == 1))) {
+            log.info("booking_withdrawn_forfeited bookingId={}", bookingId);
+        }
+        return true;
     }
 
     /**
@@ -324,25 +382,32 @@ public class BookingService {
     }
 
     /**
-     * 이 공연의 내 예매가 이미 있을 때. 확정이면 409 (공연당 예매 1건). 살아 있는 선점(또는 결제 중)이면 같은 좌석들은 그대로 · 다르면 409 HOLD_EXISTS.
-     * 마감이 지난 선점이면 먼저 정리(결제 무효화 → EXPIRED)하고 empty — 새로 선점하게 (정리 주기를 기다리지 않음)
+     * 이 공연의 내 예매가 이미 있을 때 (11/27 회차마다 확정 1건 · 진행 중 선점은 공연에 하나).
+     * 이 회차에 확정이 있으면 409 SEAT_LIMIT_EXCEEDED (다른 회차의 확정은 상관없음).
+     * 살아 있는 선점(또는 결제 중)이면 같은 회차 · 같은 좌석들은 그대로 · 아니면 409 HOLD_EXISTS (다른 회차 선점도 — 좌석을 여러 회차에 쥐고 있지 않게).
+     * 마감이 지난 선점이면 먼저 정리(결제 무효화 → EXPIRED)하고 넘어갑니다 — 새로 선점하게 (정리 주기를 기다리지 않음)
      */
-    private Optional<BookingCreated> keepOrClear(BookingEntity b, List<Long> seatIds) {
-        if (b.getStatus() == BookingEntity.Status.CONFIRMED) {
-            throw new GeneralException(SeatErrorCode.SEAT_LIMIT_EXCEEDED, "이미 예매한 공연입니다").with("bookingId", b.getId());
-        }
-        if (b.getPayingAt() != null || holdOpen(b)) {
-            if (!new HashSet<>(seatsOf(b.getId())).equals(new HashSet<>(seatIds))) {
-                throw new GeneralException(BookingErrorCode.HOLD_EXISTS).with("bookingId", b.getId());
+    private Optional<BookingCreated> keepOrClear(List<BookingEntity> mine, long sessionId, List<Long> seatIds) {
+        for (BookingEntity b : mine) {
+            if (b.getStatus() == BookingEntity.Status.CONFIRMED && b.getSessionId() == sessionId) {
+                throw new GeneralException(SeatErrorCode.SEAT_LIMIT_EXCEEDED, "이미 예매한 회차입니다").with("bookingId", b.getId());
             }
-            String pgOrderId = b.getPgOrderId() != null ? b.getPgOrderId() : prepared(b.getId(), b.getUserId(), b.getTotalPrice(), false);
-            return Optional.of(created(b, pgOrderId));
         }
-        if ("APPROVED".equals(cancelPayment(b.getId(), "EXPIRED", false))) {
-            confirm(b.getId());
-            throw new GeneralException(BookingErrorCode.ALREADY_PAID);
+        for (BookingEntity b : mine) {
+            if (b.getStatus() != BookingEntity.Status.PENDING) continue;
+            if (b.getPayingAt() != null || holdOpen(b)) {
+                if (b.getSessionId() != sessionId || !new HashSet<>(seatsOf(b.getId())).equals(new HashSet<>(seatIds))) {
+                    throw new GeneralException(BookingErrorCode.HOLD_EXISTS).with("bookingId", b.getId());
+                }
+                String pgOrderId = b.getPgOrderId() != null ? b.getPgOrderId() : prepared(b.getId(), b.getUserId(), b.getTotalPrice(), false);
+                return Optional.of(created(b, pgOrderId));
+            }
+            if ("APPROVED".equals(cancelPayment(b.getId(), "EXPIRED", false))) {
+                confirm(b.getId());
+                throw new GeneralException(BookingErrorCode.ALREADY_PAID);
+            }
+            release(b.getId(), true);
         }
-        release(b.getId(), true);
         return Optional.empty();
     }
 
@@ -392,7 +457,8 @@ public class BookingService {
             if (BookingEntity.Status.CONFIRMED.name().equals(before)) {
                 BookingEntity b = bookingRepository.findById(bookingId).orElseThrow();
                 ConcertEntity c = concertRepository.findById(b.getConcertId()).orElseThrow();
-                events.bookingCancelled(b, c, venueRepository.findById(c.getVenueId()).orElseThrow(), seats, OffsetDateTime.now(clock));
+                events.bookingCancelled(b, c, sessionStartsAt(b), venueRepository.findById(c.getVenueId()).orElseThrow(), seats,
+                        OffsetDateTime.now(clock));
             }
             log.info("booking_{} bookingId={} seats={}", expired ? "expired" : "cancelled", bookingId, seats);
             return true;
@@ -431,6 +497,15 @@ public class BookingService {
     /** 화면 마감까지 남은 초 (DB 시계 기준) — 프론트는 이 값으로 타이머를 돌립니다 (기기 시계가 틀려도 맞음) */
     private long expiresIn(BookingEntity b) {
         return Math.max(0, Duration.between(dbNow(), expiresAt(b)).toSeconds());
+    }
+
+    /** 확정 예매 환불 마감 = 회차 시작 − cancel-deadline-hours (회원 취소 · 탈퇴 환불 같은 기준) */
+    private OffsetDateTime cancelDeadline(BookingEntity b) {
+        return sessionStartsAt(b).minusHours(props.cancelDeadlineHours());
+    }
+
+    private OffsetDateTime sessionStartsAt(BookingEntity b) {
+        return sessionRepository.findById(b.getSessionId()).orElseThrow().getStartsAt();
     }
 
     /** 서버 마감 전인가 (DB now()) */

@@ -21,6 +21,8 @@ import com.indie.concert.domain.concert.entity.ConcertEntity;
 import com.indie.concert.domain.concert.entity.Region;
 import com.indie.concert.domain.concert.repository.ArtistRepository;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
+import com.indie.concert.domain.concert.repository.ConcertSessionRepository;
+import com.indie.concert.domain.concert.entity.ConcertSessionEntity;
 import com.indie.concert.domain.concert.service.ArtistService;
 import com.indie.concert.domain.concert.service.ConcertAdminService;
 import com.indie.concert.domain.concert.service.ConcertService;
@@ -113,6 +115,7 @@ class ConcertSchemaTest {
     @Autowired ConcertSeatRepository seatRepository;
     @Autowired ConcertService concertService;
     @Autowired ConcertRepository concertRepository;
+    @Autowired ConcertSessionRepository sessionRepository;
     @Autowired BookingRepository bookingRepository;
     @Autowired QueueEntryRepository queueEntries;
     @Autowired ArtistRepository artists;
@@ -157,14 +160,17 @@ class ConcertSchemaTest {
         assertThat(bookingRepository.findStalePaying(60, 50)).contains(stale).doesNotContain(open, ended, paying);
     }
 
-    /** ★ 1인 1예매의 최종 방어 — 같은 공연에 진행 중 · 확정 예매는 하나 (uq_booking_active · Flyway 에만 있음) */
+    /** ★ 1인 1예매의 최종 방어 — 같은 회차에 진행 중 · 확정 예매는 하나 (uq_booking_active · Flyway 에만 있음 · 11/27 공연당 → 회차당) */
     @Test
-    void oneActiveBookingPerUserPerConcert() {
+    void oneActiveBookingPerUserPerSession() {
         long concertId = concert("once");
+        long second = addSession(concertId, "31 days");
         OffsetDateTime now = OffsetDateTime.now();
         long first = book(5L, concertId, now);
 
         assertThatThrownBy(() -> book(5L, concertId, now)).isInstanceOf(DataIntegrityViolationException.class);
+        assertThat(book(5L, concertId, second, now)).isPositive();                       // 다른 회차는 따로
+        assertThat(bookingRepository.findActive(concertId, 5L)).hasSize(2);
 
         tx.executeWithoutResult(s -> bookingRepository.cancel(first));
         assertThat(book(5L, concertId, now)).isPositive();
@@ -193,6 +199,39 @@ class ConcertSchemaTest {
         assertThat(bookingRepository.findById(paid).orElseThrow().getCheckedInAt()).isNotNull();
         Integer unpaid = tx.execute(s -> bookingRepository.checkIn(pending, 1L, now));
         assertThat(unpaid).isZero();
+    }
+
+    /**
+     * 11/27 탈퇴 — 입장한 예매는 표시하지 않고, 표시된 예매는 입장 불가 (같은 행 조건부 UPDATE 라 둘 중 하나만).
+     * 환불 없는 만료(forfeit)는 표시된 확정 · 입장 전만 · 재시도 목록은 아직 닫히지 않은 표시 예매
+     */
+    @Test
+    void withdrawalAndCheckInExcludeEachOther() {
+        long concertId = concert("withdrawn");
+        OffsetDateTime now = OffsetDateTime.now();
+        long entered = book(21L, concertId, now);
+        long paid = book(21L, concertId, addSession(concertId, "31 days"), now);
+        long hold = book(21L, concertId, addSession(concertId, "32 days"), now);
+        long other = book(22L, concertId, now);
+        tx.executeWithoutResult(s -> {
+            bookingRepository.confirm(entered);
+            bookingRepository.confirm(paid);
+            bookingRepository.confirm(other);
+            bookingRepository.checkIn(entered, 1L, now);
+        });
+
+        Integer marked = tx.execute(s -> bookingRepository.markWithdrawn(21L, now));
+
+        assertThat(marked).isEqualTo(2);
+        assertThat(bookingRepository.findWithdrawnIds(21L)).containsExactly(paid, hold);
+        assertThat(bookingRepository.findWithdrawnOpen(50)).contains(paid, hold).doesNotContain(entered, other);
+        assertThat((int) tx.execute(s -> bookingRepository.checkIn(paid, 1L, now))).isZero();
+        assertThat((int) tx.execute(s -> bookingRepository.forfeit(hold))).isZero();          // 결제 전은 만료 정리로
+        assertThat((int) tx.execute(s -> bookingRepository.forfeit(other))).isZero();         // 표시 없음
+        assertThat((int) tx.execute(s -> bookingRepository.forfeit(paid))).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT status FROM booking WHERE id = ?", String.class, paid)).isEqualTo("EXPIRED");
+        assertThat(bookingRepository.findWithdrawnOpen(50)).doesNotContain(paid);
+        assertThat((int) tx.execute(s -> bookingRepository.markWithdrawn(21L, now))).isZero();   // 다시 와도 그대로
     }
 
     /** 스냅샷 upsert 는 seq 가 같으면 입장 · 이탈 기록을 WAITING 으로 되돌리지 않고, 재진입(더 큰 seq)이면 되살립니다 */
@@ -244,25 +283,27 @@ class ConcertSchemaTest {
         assertThat(index).isEqualTo(1);
     }
 
-    /** 검표 화면 공연 목록 — 끝 시각이 있으면 그 시각까지, 없으면 시작 + 6시간까지. 끝이 시작보다 앞이면 DB 가 거부 */
+    /**
+     * 11/27 검표 화면 — 입장이 열린 회차: 시작 ≤ 지금 + 60분 · 시작 > 지금 − 30분 (공연 끝 시각은 보지 않음).
+     * 같은 공연에 같은 시각 회차 두 개는 커밋 때 거부 (uq_concert_session DEFERRABLE) · 마지막 회차가 첫 회차보다 앞이면 거부
+     */
     @Test
-    void entryOpenConcertsUseEndsAtWhenKnown() {
+    void entryOpenSessionsFollowSessionStart() {
         OffsetDateTime now = OffsetDateTime.now();
-        long ended = concert("entry-ended");
-        long festival = concert("entry-festival");
-        long noEnd = concert("entry-no-end");
-        long tooOld = concert("entry-too-old");
-        jdbc.update("UPDATE concert SET booking_open_at = NULL WHERE id IN (?, ?, ?, ?)", ended, festival, noEnd, tooOld);   // 오픈 < 시작 (ck_concert_open_before_start)
-        jdbc.update("UPDATE concert SET starts_at = now() - interval '2 hours', ends_at = now() - interval '1 minute' WHERE id = ?", ended);
-        jdbc.update("UPDATE concert SET starts_at = now() - interval '7 hours', ends_at = now() + interval '1 hour' WHERE id = ?", festival);
-        jdbc.update("UPDATE concert SET starts_at = now() - interval '5 hours' WHERE id = ?", noEnd);
-        jdbc.update("UPDATE concert SET starts_at = now() - interval '7 hours' WHERE id = ?", tooOld);
+        long concertId = concert("entry-sessions");
+        jdbc.update("UPDATE concert SET booking_open_at = NULL WHERE id = ?", concertId);
+        long soon = addSession(concertId, "59 minutes");
+        long started = addSession(concertId, "-29 minutes");
+        long tooEarly = addSession(concertId, "61 minutes");
+        long closed = addSession(concertId, "-31 minutes");
 
-        List<Long> open = concertRepository.findEntryOpen(now, now.plusHours(3), now.minusHours(6)).stream()
-                .map(c -> c.getId()).toList();
+        List<Long> open = sessionRepository.findByStartsAtLessThanEqualAndStartsAtGreaterThanOrderByStartsAtAsc(now.plusMinutes(60), now.minusMinutes(30)).stream()
+                .map(ConcertSessionEntity::getId).toList();
 
-        assertThat(open).contains(festival, noEnd).doesNotContain(ended, tooOld);
-        assertThatThrownBy(() -> jdbc.update("UPDATE concert SET ends_at = starts_at WHERE id = ?", noEnd))
+        assertThat(open).contains(soon, started).doesNotContain(tooEarly, closed);
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO concert_session (concert_id, starts_at) SELECT concert_id, starts_at FROM concert_session WHERE id = ?", soon))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("UPDATE concert SET last_starts_at = starts_at - interval '1 minute' WHERE id = ?", concertId))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -364,7 +405,7 @@ class ConcertSchemaTest {
         jdbc.update("UPDATE concert_seat SET status = 'PAYING', hold_expires_at = now() - interval '1 second' WHERE booking_id = ?",
                 payingBooking);
 
-        assertThat(seatRepository.findSeatMap(concertId)).extracting(ConcertSeatRepository.SeatMapRow::getId,
+        assertThat(seatRepository.findSeatMap(concertId, sessionOf(concertId))).extracting(ConcertSeatRepository.SeatMapRow::getId,
                 ConcertSeatRepository.SeatMapRow::getStatus).containsExactly(
                 tuple(ended, "AVAILABLE"), tuple(paying, "HELD"));
     }
@@ -387,7 +428,7 @@ class ConcertSchemaTest {
         assertThat(detail.posterUrl()).isEqualTo("https://img/poster.jpg");
         assertThat(detail.imageUrls()).containsExactly("https://img/1.jpg", "https://img/2.jpg");
         ConcertDetail edited = admin.update(detail.id(), new ConcertUpdateRequest(null, null, null, null, null, null, null, null, null,
-                null, "예매 약관", null, null, List.of("https://img/3.jpg")));
+                null, "예매 약관", null, null, List.of("https://img/3.jpg"), null));
         assertThat(edited.terms()).isEqualTo("예매 약관");
         assertThat(edited.description()).isEqualTo("상세 **소개**");                              // 안 보낸 값은 그대로
         assertThat(edited.imageUrls()).containsExactly("https://img/3.jpg");                     // 보내면 목록 전체 교체
@@ -506,8 +547,10 @@ class ConcertSchemaTest {
         long a1 = artist(141, "혁오", "INDIE_ROCK");
         long a2 = artist(142, "새소년", "INDIE_ROCK");
         long id = admin.create(festival(venue("공지홀"), "공지 페스티벌", List.of(a1, a2))).id();
-        jdbc.update("INSERT INTO booking (user_id, concert_id, status, total_price, created_at) VALUES "
-                + "(7001, ?, 'CONFIRMED', 55000, now()), (7002, ?, 'CANCELLED', 55000, now()), (7003, ?, 'CONFIRMED', 55000, now())", id, id, id);
+        long session = sessionOf(id);
+        jdbc.update("INSERT INTO booking (user_id, concert_id, session_id, status, total_price, created_at) VALUES "
+                + "(7001, ?, ?, 'CONFIRMED', 55000, now()), (7002, ?, ?, 'CANCELLED', 55000, now()), (7003, ?, ?, 'CONFIRMED', 55000, now())",
+                id, session, id, session, id, session);
 
         NoticeView first = notices.create(id, new NoticeCreateRequest(ConcertNoticeEntity.Kind.SCHEDULE, " 시간 변경 ", "19시 → 18시"));
         var event = lastEvent("concert.notice_posted");
@@ -535,11 +578,11 @@ class ConcertSchemaTest {
         long a = artist(121, "새소년", "INDIE_ROCK");
         long venueId = venue("단독홀");
         ConcertDetail solo = admin.create(new ConcertCreateRequest(venueId, "단독공연", ConcertEntity.Type.SOLO, null,
-                OffsetDateTime.now().plusDays(30), null, 55000, null, null, 2, List.of(a), null, null, null, null, null, null, null));
+                OffsetDateTime.now().plusDays(30), null, 55000, null, null, 2, List.of(a), null, null, null, null, null, null, null, null));
         long fest = admin.create(festival(venueId, "같이 나오는 페스티벌", List.of(a))).id();
         assertThat(solo.genre()).isEqualTo("INDIE_ROCK");
         assertThatThrownBy(() -> admin.create(new ConcertCreateRequest(venueId, "장르 지정", ConcertEntity.Type.SOLO, Genre.ALTERNATIVE,
-                OffsetDateTime.now().plusDays(30), null, null, null, null, 2, List.of(a), null, null, null, null, null, null, null)))
+                OffsetDateTime.now().plusDays(30), null, null, null, null, 2, List.of(a), null, null, null, null, null, null, null, null)))
                 .isInstanceOfSatisfying(GeneralException.class, e -> assertThat(e.getErrorCode().getCode()).isEqualTo("INVALID_REQUEST"));
 
         artistService.apply(a, "새소년", "PSYCHEDELIC", OffsetDateTime.now());
@@ -563,7 +606,7 @@ class ConcertSchemaTest {
                 .isInstanceOfSatisfying(GeneralException.class, e -> assertThat(e.getData()).containsKey("artistIds"));
         assertThatThrownBy(() -> admin.create(festival(venueId, "중복", List.of(a, a)))).isInstanceOf(GeneralException.class);
         assertThatThrownBy(() -> admin.create(new ConcertCreateRequest(venueId, "둘", ConcertEntity.Type.SOLO, null,
-                OffsetDateTime.now().plusDays(30), null, null, null, null, 2, List.of(a, artist(132, "다른", null)), null, null, null, null, null, null, null)))
+                OffsetDateTime.now().plusDays(30), null, null, null, null, 2, List.of(a, artist(132, "다른", null)), null, null, null, null, null, null, null, null)))
                 .isInstanceOf(GeneralException.class);
     }
 
@@ -612,19 +655,41 @@ class ConcertSchemaTest {
 
     /** N10 의 저장 부분 — 예매 + 서버 마감(DB now() + 9분) + 좌석 선점 */
     private long hold(long userId, long concertId, long concertSeatId) {
+        long sessionId = jdbc.queryForObject("SELECT session_id FROM concert_seat WHERE id = ?", Long.class, concertSeatId);
         Long id = tx.execute(s -> {
-            long bookingId = bookingRepository.save(new BookingEntity(userId, concertId, 55000, OffsetDateTime.now())).getId();
+            long bookingId = bookingRepository.save(new BookingEntity(userId, concertId, sessionId, 55000, OffsetDateTime.now())).getId();
             bookingRepository.startHold(bookingId, 540);
             jdbc.update("INSERT INTO booking_seat (booking_id, concert_seat_id) VALUES (?, ?)", bookingId, concertSeatId);
-            seatRepository.hold(concertSeatId, concertId, bookingId, userId);
+            seatRepository.hold(concertSeatId, sessionId, bookingId, userId);
             return bookingId;
         });
         return id == null ? 0 : id;
     }
 
+    /** 첫 회차 예매 */
     private long book(long userId, long concertId, OffsetDateTime at) {
-        Long id = tx.execute(s -> bookingRepository.save(new BookingEntity(userId, concertId, 55000, at)).getId());
+        return book(userId, concertId, sessionOf(concertId), at);
+    }
+
+    private long book(long userId, long concertId, long sessionId, OffsetDateTime at) {
+        Long id = tx.execute(s -> bookingRepository.save(new BookingEntity(userId, concertId, sessionId, 55000, at)).getId());
         return id == null ? 0 : id;
+    }
+
+    /** 공연의 첫 회차 */
+    private long sessionOf(long concertId) {
+        return jdbc.queryForObject("SELECT id FROM concert_session WHERE concert_id = ? ORDER BY starts_at LIMIT 1", Long.class, concertId);
+    }
+
+    /** 회차를 하나 더 — 시작은 now() 기준 간격 · 공연의 첫 · 마지막 회차를 맞춥니다 */
+    private long addSession(long concertId, String fromNow) {
+        long id = jdbc.queryForObject("INSERT INTO concert_session (concert_id, starts_at) VALUES (?, now() + CAST(? AS interval)) RETURNING id",
+                Long.class, concertId, fromNow);
+        jdbc.update("""
+                UPDATE concert c SET starts_at = s.first, last_starts_at = s.last
+                FROM (SELECT min(starts_at) AS first, max(starts_at) AS last FROM concert_session WHERE concert_id = ?) s WHERE c.id = ?
+                """, concertId, concertId);
+        return id;
     }
 
     private long venue(String name) {
@@ -638,20 +703,25 @@ class ConcertSchemaTest {
         return concert(title, venue("롤링홀"));
     }
 
+    /** 회차 하나 (30일 뒤) */
     private long concert(String title, long venueId) {
-        return jdbc.queryForObject("""
-                INSERT INTO concert (venue_id, title, type, starts_at, booking_open_at, max_seats_per_user, updated_at)
-                VALUES (?, ?, 'SOLO', now() + interval '30 days', now() - interval '1 hour', 4, now()) RETURNING id
+        long id = jdbc.queryForObject("""
+                INSERT INTO concert (venue_id, title, type, starts_at, last_starts_at, booking_open_at, max_seats_per_user, updated_at)
+                VALUES (?, ?, 'SOLO', now() + interval '30 days', now() + interval '30 days', now() - interval '1 hour', 4, now()) RETURNING id
                 """, Long.class, venueId, title);
+        jdbc.update("INSERT INTO concert_session (concert_id, starts_at) SELECT id, starts_at FROM concert WHERE id = ?", id);
+        return id;
     }
 
     /** 공연장 배치에 좌석을 하나 만들고 이 공연에서 팝니다 — 반환은 concert_seat.id */
     /** 공연 하나 + 라인업 — starts · opens · updated 는 now() 기준 간격 ("10 days", "-1 hour") */
     private long listed(String title, long venueId, String type, String genre, String starts, String opens, String updated, long... lineup) {
         long id = jdbc.queryForObject("""
-                INSERT INTO concert (venue_id, title, type, genre, starts_at, booking_open_at, max_seats_per_user, updated_at)
-                VALUES (?, ?, ?, ?, now() + CAST(? AS interval), now() + CAST(? AS interval), 4, now() + CAST(? AS interval)) RETURNING id
-                """, Long.class, venueId, title, type, genre, starts, opens, updated);
+                INSERT INTO concert (venue_id, title, type, genre, starts_at, last_starts_at, booking_open_at, max_seats_per_user, updated_at)
+                VALUES (?, ?, ?, ?, now() + CAST(? AS interval), now() + CAST(? AS interval), now() + CAST(? AS interval), 4,
+                        now() + CAST(? AS interval)) RETURNING id
+                """, Long.class, venueId, title, type, genre, starts, starts, opens, updated);
+        jdbc.update("INSERT INTO concert_session (concert_id, starts_at) SELECT id, starts_at FROM concert WHERE id = ?", id);
         for (int i = 0; i < lineup.length; i++) {
             jdbc.update("INSERT INTO concert_artist (concert_id, artist_id, billing_order) VALUES (?, ?, ?)", id, lineup[i], i + 1);
         }
@@ -668,18 +738,18 @@ class ConcertSchemaTest {
         long venueId = jdbc.queryForObject("SELECT venue_id FROM concert WHERE id = ?", Long.class, concertId);
         long sectionId = layoutService.saveSection(venueId, layout(venueId, "1F", "S" + SECTION.incrementAndGet(), 0, 1, 1)).sectionId();
         return jdbc.queryForObject("""
-                INSERT INTO concert_seat (concert_id, seat_id, price, status)
-                SELECT ?, id, 55000, 'AVAILABLE' FROM seat WHERE section_id = ? RETURNING id
-                """, Long.class, concertId, sectionId);
+                INSERT INTO concert_seat (concert_id, session_id, seat_id, price, status)
+                SELECT ?, ?, id, 55000, 'AVAILABLE' FROM seat WHERE section_id = ? RETURNING id
+                """, Long.class, concertId, sessionOf(concertId), sectionId);
     }
 
     /** 공연장 좌석 전부를 이 공연에서 팝니다 */
     private void sell(long concertId, long venueId) {
         jdbc.update("""
-                INSERT INTO concert_seat (concert_id, seat_id, price, status)
-                SELECT ?, s.id, 55000, 'AVAILABLE' FROM seat s JOIN section sc ON sc.id = s.section_id
+                INSERT INTO concert_seat (concert_id, session_id, seat_id, price, status)
+                SELECT ?, ?, s.id, 55000, 'AVAILABLE' FROM seat s JOIN section sc ON sc.id = s.section_id
                 JOIN floor f ON f.id = sc.floor_id WHERE f.venue_id = ?
-                """, concertId, venueId);
+                """, concertId, sessionOf(concertId), venueId);
     }
 
     private static final AtomicInteger SECTION = new AtomicInteger();
@@ -709,7 +779,7 @@ class ConcertSchemaTest {
         OffsetDateTime starts = OffsetDateTime.now().plusDays(40);
         return new ConcertCreateRequest(venueId, title, ConcertEntity.Type.FESTIVAL, Genre.ALTERNATIVE, starts, starts.plusHours(8),
                 99000, starts.minusDays(20), true, 4, artistIds, null, null, "상세 **소개**", " ", "만 19세 이상 · 신분증 지참",
-                "https://img/poster.jpg", List.of("https://img/1.jpg", "https://img/2.jpg"));
+                "https://img/poster.jpg", List.of("https://img/1.jpg", "https://img/2.jpg"), null);
     }
 
     private String genre(long concertId) {

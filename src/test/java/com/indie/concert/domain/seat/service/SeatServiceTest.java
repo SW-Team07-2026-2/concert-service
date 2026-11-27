@@ -3,7 +3,9 @@ package com.indie.concert.domain.seat.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indie.concert.domain.concert.entity.ConcertEntity;
+import com.indie.concert.domain.concert.entity.ConcertSessionEntity;
 import com.indie.concert.domain.concert.repository.ConcertRepository;
+import com.indie.concert.domain.concert.repository.ConcertSessionRepository;
 import com.indie.concert.domain.layout.repository.LayoutRepository;
 import com.indie.concert.domain.queue.exception.QueueErrorCode;
 import com.indie.concert.domain.queue.service.QueueService;
@@ -44,14 +46,21 @@ class SeatServiceTest {
     private static final ObjectMapper JSON = Jackson2ObjectMapperBuilder.json().build();   // 스프링이 응답에 쓰는 것과 같은 설정
 
     private final ConcertRepository concerts = mock(ConcertRepository.class);
+    private final ConcertSessionRepository sessions = mock(ConcertSessionRepository.class);
     private final ConcertSeatRepository seats = mock(ConcertSeatRepository.class);
     private final LayoutRepository layout = mock(LayoutRepository.class);
     private final SeatCache cache = mock(SeatCache.class);
     private final QueueService queue = mock(QueueService.class);
-    private final SeatService service = new SeatService(concerts, seats, layout, cache, queue, JSON,
+    private final SeatService service = new SeatService(concerts, sessions, seats, layout, cache, queue, JSON,
             Clock.fixed(NOW, ZoneOffset.UTC));
 
-    private static final SeatMap CACHED = new SeatMap(1L, 4, 2, 1, null, null, List.of(new FloorView(10L, "1층", List.of(
+    /** 공연 1 의 회차는 1 하나 (회차가 하나면 sessionId 를 생략해도 됨) */
+    {
+        ConcertSessionEntity only = session(1L);
+        when(sessions.findByConcertIdOrderByStartsAtAsc(1L)).thenReturn(List.of(only));
+    }
+
+    private static final SeatMap CACHED = new SeatMap(1L, 1L, 4, 2, 1, null, null, List.of(new FloorView(10L, "1층", List.of(
             new SectionView(100L, "가 구역", List.of(List.of(new BigDecimal("0.1"), new BigDecimal("0.2"))), new BigDecimal("12.5"),
                     List.of(new SeatView(1000L, 1, 1, new BigDecimal("0.15"), new BigDecimal("0.2"), BigDecimal.ZERO, 55000, "AVAILABLE"),
                             new SeatView(1001L, 1, 2, new BigDecimal("0.16"), new BigDecimal("0.2"), BigDecimal.ZERO, 55000, "SOLD")))))));
@@ -63,7 +72,7 @@ class SeatServiceTest {
         when(queue.entryLeft(1L, 3L, "tok")).thenReturn(301L);
         OffsetDateTime expiresAt = OffsetDateTime.ofInstant(NOW, ZoneOffset.UTC).plusSeconds(301);
 
-        JsonNode body = JSON.readTree(service.seatsJson(1L, 3L, "tok"));
+        JsonNode body = JSON.readTree(service.seatsJson(1L, null, 3L, "tok"));
 
         assertThat(body).isEqualTo(JSON.readTree(JSON.writeValueAsBytes(ApiResponse.onSuccess(CACHED.withTimer(expiresAt, 301)))));
         assertThat(body.at("/result/expiresIn").asLong()).isEqualTo(301L);
@@ -76,7 +85,7 @@ class SeatServiceTest {
     void noTokenNoTimer() throws Exception {
         when(cache.get(1L)).thenReturn(Optional.of(CACHED));
 
-        JsonNode body = JSON.readTree(service.seatsJson(1L, 3L, null));
+        JsonNode body = JSON.readTree(service.seatsJson(1L, null, 3L, null));
 
         assertThat(body).isEqualTo(JSON.readTree(JSON.writeValueAsBytes(ApiResponse.onSuccess(CACHED))));
         assertThat(body.at("/result").has("expiresIn")).isFalse();
@@ -90,9 +99,9 @@ class SeatServiceTest {
         when(queue.entryLeft(1L, 3L, "a")).thenReturn(300L);
         when(queue.entryLeft(1L, 4L, "b")).thenReturn(120L);
 
-        JsonNode a = JSON.readTree(service.seatsJson(1L, 3L, "a"));
-        JsonNode b = JSON.readTree(service.seatsJson(1L, 4L, "b"));
-        JsonNode none = JSON.readTree(service.seatsJson(1L, 5L, null));
+        JsonNode a = JSON.readTree(service.seatsJson(1L, null, 3L, "a"));
+        JsonNode b = JSON.readTree(service.seatsJson(1L, null, 4L, "b"));
+        JsonNode none = JSON.readTree(service.seatsJson(1L, null, 5L, null));
 
         assertThat(a.at("/result/expiresIn").asLong()).isEqualTo(300L);
         assertThat(b.at("/result/expiresIn").asLong()).isEqualTo(120L);
@@ -106,7 +115,7 @@ class SeatServiceTest {
     void expiredTokenIsRejectedBeforeMap() {
         when(queue.entryLeft(1L, 3L, "old")).thenThrow(new GeneralException(QueueErrorCode.QUEUE_NOT_ADMITTED));
 
-        assertThatThrownBy(() -> service.seatsJson(1L, 3L, "old"))
+        assertThatThrownBy(() -> service.seatsJson(1L, null, 3L, "old"))
                 .isInstanceOfSatisfying(GeneralException.class, e -> assertThat(e.getErrorCode().getCode()).isEqualTo("QUEUE_NOT_ADMITTED"));
         verify(cache, never()).get(anyLong());
     }
@@ -124,9 +133,9 @@ class SeatServiceTest {
         List<ConcertSeatRepository.SeatMapRow> rows = List.of(seat(1000L, 100L, "AVAILABLE"), seat(1001L, 100L, "SOLD"),
                 seat(2000L, 200L, "HELD"));
         when(layout.findSections(5L)).thenReturn(sections);
-        when(seats.findSeatMap(1L)).thenReturn(rows);
+        when(seats.findSeatMap(1L, 1L)).thenReturn(rows);
 
-        SeatMap map = service.map(1L);
+        SeatMap map = service.map(1L, 1L);
 
         assertThat(map.maxSeatsPerUser()).isEqualTo(2);
         assertThat(map.total()).isEqualTo(3);
@@ -136,6 +145,34 @@ class SeatServiceTest {
         assertThat(map.floors().get(0).sections().get(1).seats()).isEmpty();
         assertThat(map.floors().get(0).sections().get(0).shape()).hasSize(3);
         verify(cache).put(map);
+    }
+
+    /** 11/27 회차가 둘 이상이면 sessionId 필수 · 다른 공연 회차는 404 · 캐시는 회차마다 */
+    @Test
+    void multiSessionConcertNeedsSessionId() throws Exception {
+        List<ConcertSessionEntity> two = List.of(session(21L), session(22L));
+        when(sessions.findByConcertIdOrderByStartsAtAsc(2L)).thenReturn(two);
+        SeatMap second = new SeatMap(2L, 22L, 4, 0, 0, null, null, List.of());
+        when(cache.get(22L)).thenReturn(Optional.of(second));
+
+        assertThatThrownBy(() -> service.seatsJson(2L, null, 3L, null))
+                .isInstanceOfSatisfying(GeneralException.class, e -> assertThat(e.getErrorCode().getCode()).isEqualTo("SESSION_REQUIRED"));
+        assertThatThrownBy(() -> service.seatsJson(2L, 1L, 3L, null))
+                .isInstanceOfSatisfying(GeneralException.class, e -> assertThat(e.getErrorCode().getCode()).isEqualTo("SESSION_NOT_FOUND"));
+        assertThat(JSON.readTree(service.seatsJson(2L, 22L, 3L, null)).at("/result/sessionId").asLong()).isEqualTo(22L);
+        verify(cache, never()).get(21L);
+    }
+
+    @Test
+    void unknownConcertIsNotFound() {
+        assertThatThrownBy(() -> service.seatsJson(404L, null, 3L, null))
+                .isInstanceOfSatisfying(GeneralException.class, e -> assertThat(e.getErrorCode().getCode()).isEqualTo("NOT_FOUND"));
+    }
+
+    private static ConcertSessionEntity session(long id) {
+        ConcertSessionEntity s = mock(ConcertSessionEntity.class);
+        when(s.getId()).thenReturn(id);
+        return s;
     }
 
     private static LayoutRepository.SectionRow section(long floorId, String floor, long id, String name) {
